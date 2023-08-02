@@ -9,7 +9,7 @@ import (
 
 	"time"
 
-	"github.com/libp2p/zeroconf/v2"
+	"github.com/betamos/zeroconf/v2"
 )
 
 var (
