@@ -438,15 +438,6 @@ func (s *Server) composeBrowsingAnswers(resp *dns.Msg, ifIndex int) {
 	}
 	resp.Answer = append(resp.Answer, ptr)
 
-	txt := &dns.TXT{
-		Hdr: dns.RR_Header{
-			Name:   s.service.ServiceInstanceName(),
-			Rrtype: dns.TypeTXT,
-			Class:  dns.ClassINET,
-			Ttl:    s.ttl,
-		},
-		Txt: s.service.Text,
-	}
 	srv := &dns.SRV{
 		Hdr: dns.RR_Header{
 			Name:   s.service.ServiceInstanceName(),
@@ -459,7 +450,20 @@ func (s *Server) composeBrowsingAnswers(resp *dns.Msg, ifIndex int) {
 		Port:     uint16(s.service.Port),
 		Target:   s.service.HostName,
 	}
-	resp.Extra = append(resp.Extra, srv, txt)
+	resp.Extra = append(resp.Extra, srv)
+
+	if s.service.Text != nil {
+		txt := &dns.TXT{
+			Hdr: dns.RR_Header{
+				Name:   s.service.ServiceInstanceName(),
+				Rrtype: dns.TypeTXT,
+				Class:  dns.ClassINET,
+				Ttl:    s.ttl,
+			},
+			Txt: s.service.Text,
+		}
+		resp.Extra = append(resp.Extra, txt)
+	}
 
 	resp.Extra = s.appendAddrs(resp.Extra, s.ttl, ifIndex, false)
 }
@@ -491,15 +495,6 @@ func (s *Server) composeLookupAnswers(resp *dns.Msg, ttl uint32, ifIndex int, fl
 		Port:     uint16(s.service.Port),
 		Target:   s.service.HostName,
 	}
-	txt := &dns.TXT{
-		Hdr: dns.RR_Header{
-			Name:   s.service.ServiceInstanceName(),
-			Rrtype: dns.TypeTXT,
-			Class:  dns.ClassINET | qClassCacheFlush,
-			Ttl:    ttl,
-		},
-		Txt: s.service.Text,
-	}
 	dnssd := &dns.PTR{
 		Hdr: dns.RR_Header{
 			Name:   s.service.ServiceTypeName(),
@@ -509,7 +504,20 @@ func (s *Server) composeLookupAnswers(resp *dns.Msg, ttl uint32, ifIndex int, fl
 		},
 		Ptr: s.service.ServiceName(),
 	}
-	resp.Answer = append(resp.Answer, srv, txt, ptr, dnssd)
+	resp.Answer = append(resp.Answer, srv, ptr, dnssd)
+
+	if s.service.Text != nil {
+		txt := &dns.TXT{
+			Hdr: dns.RR_Header{
+				Name:   s.service.ServiceInstanceName(),
+				Rrtype: dns.TypeTXT,
+				Class:  dns.ClassINET | qClassCacheFlush,
+				Ttl:    ttl,
+			},
+			Txt: s.service.Text,
+		}
+		resp.Answer = append(resp.Answer, txt)
+	}
 
 	for _, subtype := range s.service.Subtypes {
 		resp.Answer = append(resp.Answer,
@@ -549,7 +557,7 @@ func (s *Server) serviceTypeName(resp *dns.Msg, ttl uint32) {
 }
 
 // Perform probing & announcement
-//TODO: implement a proper probing & conflict resolution
+// TODO: implement a proper probing & conflict resolution
 func (s *Server) probe() {
 	defer s.refCount.Done()
 
@@ -569,16 +577,20 @@ func (s *Server) probe() {
 		Port:     uint16(s.service.Port),
 		Target:   s.service.HostName,
 	}
-	txt := &dns.TXT{
-		Hdr: dns.RR_Header{
-			Name:   s.service.ServiceInstanceName(),
-			Rrtype: dns.TypeTXT,
-			Class:  dns.ClassINET,
-			Ttl:    s.ttl,
-		},
-		Txt: s.service.Text,
+	q.Ns = []dns.RR{srv}
+
+	if s.service.Text != nil {
+		txt := &dns.TXT{
+			Hdr: dns.RR_Header{
+				Name:   s.service.ServiceInstanceName(),
+				Rrtype: dns.TypeTXT,
+				Class:  dns.ClassINET,
+				Ttl:    s.ttl,
+			},
+			Txt: s.service.Text,
+		}
+		q.Ns = append(q.Ns, txt)
 	}
-	q.Ns = []dns.RR{srv, txt}
 
 	// Wait for a random duration uniformly distributed between 0 and 250 ms
 	// before sending the first probe packet.
