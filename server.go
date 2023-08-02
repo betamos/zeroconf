@@ -21,7 +21,9 @@ const (
 	multicastRepetitions = 2
 )
 
-var defaultTTL uint32 = 3200
+// RFC6762 Section 10 says A/AAAA/PTR/SRV records SHOULD use TTL of 120 s, to account for
+// network interface and IP address changes. For simplicity, all records use the same TTL.
+var defaultTTL uint32 = 120
 
 type serverOpts struct {
 	ttl uint32
@@ -681,12 +683,6 @@ func (s *Server) appendAddrs(list []dns.RR, ttl uint32, ifIndex int, flushCache 
 			v4 = append(v4, a4...)
 			v6 = append(v6, a6...)
 		}
-	}
-	if ttl > 0 {
-		// RFC6762 Section 10 says A/AAAA records SHOULD
-		// use TTL of 120s, to account for network interface
-		// and IP address changes.
-		ttl = 120
 	}
 	var cacheFlushBit uint16
 	if flushCache {
