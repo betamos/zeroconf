@@ -20,12 +20,13 @@ var (
 	ip       = flag.String("ip", "::1", "Set IP a service should be reachable.")
 	port     = flag.Int("port", 42424, "Set the port the service is listening to.")
 	waitTime = flag.Int("wait", 10, "Duration in [s] to publish service for.")
+	ttl      = flag.Int("ttl", 120, "Set the TTL value in seconds.")
 )
 
 func main() {
 	flag.Parse()
 
-	server, err := zeroconf.RegisterProxy(*name, *service, *domain, *port, *host, []string{*ip}, []string{"txtv=0", "lo=1", "la=2"}, nil)
+	server, err := zeroconf.RegisterProxy(*name, *service, *domain, *port, *host, []string{*ip}, []string{"txtv=0", "lo=1", "la=2"}, nil, zeroconf.TTL(uint32(*ttl)))
 	if err != nil {
 		panic(err)
 	}
@@ -37,6 +38,7 @@ func main() {
 	log.Println("- Port:", *port)
 	log.Println("- Host:", *host)
 	log.Println("- IP:", *ip)
+	log.Println("- TTL:", *ttl)
 
 	// Clean exit.
 	sig := make(chan os.Signal, 1)
