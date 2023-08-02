@@ -65,8 +65,10 @@ func SelectIfaces(ifaces []net.Interface) ClientOption {
 	}
 }
 
-// Emit an entry with an expiry in the past if a previously emitted entry is unannounced.
-// This is never guaranteed to occur, but can speed up detection of disconnected clients.
+// Emit an entry with an expiry in the past if a previously emitted entry is unannounced
+// or if its TTL expires. With unannouncements, you won't see refreshed services, only presence
+// changes. This gives you (a) earlier detection of disconnected clients and (b) you don't need to
+// maintain any expiry timers yourself.
 func Unannouncements() ClientOption {
 	return func(o *clientOpts) {
 		o.unannouncements = true
@@ -204,6 +206,9 @@ func (c *client) mainloop(ctx context.Context, params *lookupParams) {
 		case t := <-ticker.C:
 			for k, e := range sentEntries {
 				if t.After(e.Expiry) {
+					if c.unannouncements {
+						params.Entries <- e
+					}
 					delete(sentEntries, k)
 				}
 			}
@@ -290,6 +295,9 @@ func (c *client) mainloop(ctx context.Context, params *lookupParams) {
 				continue
 			}
 			if _, ok := sentEntries[k]; ok {
+				if c.unannouncements {
+					sentEntries[k] = e
+				}
 				// Already sent, suppress duplicates
 				continue
 			}
