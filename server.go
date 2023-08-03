@@ -3,7 +3,6 @@ package zeroconf
 import (
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
 	"os"
 	"runtime"
@@ -219,7 +218,7 @@ func (s *Server) start() {
 		go s.recv6(s.ipv6conn)
 	}
 	s.refCount.Add(1)
-	go s.probe()
+	go s.announce()
 }
 
 // SetText updates and announces the TXT records
@@ -559,61 +558,9 @@ func (s *Server) serviceTypeName(resp *dns.Msg, ttl uint32) {
 }
 
 // Perform probing & announcement
-// TODO: implement a proper probing & conflict resolution
-func (s *Server) probe() {
+func (s *Server) announce() {
 	defer s.refCount.Done()
-
-	q := new(dns.Msg)
-	q.SetQuestion(s.service.ServiceInstanceName(), dns.TypePTR)
-	q.RecursionDesired = false
-
-	srv := &dns.SRV{
-		Hdr: dns.RR_Header{
-			Name:   s.service.ServiceInstanceName(),
-			Rrtype: dns.TypeSRV,
-			Class:  dns.ClassINET,
-			Ttl:    s.ttl,
-		},
-		Priority: 0,
-		Weight:   0,
-		Port:     uint16(s.service.Port),
-		Target:   s.service.HostName,
-	}
-	q.Ns = []dns.RR{srv}
-
-	if s.service.Text != nil {
-		txt := &dns.TXT{
-			Hdr: dns.RR_Header{
-				Name:   s.service.ServiceInstanceName(),
-				Rrtype: dns.TypeTXT,
-				Class:  dns.ClassINET,
-				Ttl:    s.ttl,
-			},
-			Txt: s.service.Text,
-		}
-		q.Ns = append(q.Ns, txt)
-	}
-
-	// Wait for a random duration uniformly distributed between 0 and 250 ms
-	// before sending the first probe packet.
-	timer := time.NewTimer(time.Duration(rand.Intn(250)) * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-	case <-s.shouldShutdown:
-		return
-	}
-	for i := 0; i < 3; i++ {
-		if err := s.multicastResponse(q, 0); err != nil {
-			log.Println("[ERR] zeroconf: failed to send probe:", err.Error())
-		}
-		timer.Reset(250 * time.Millisecond)
-		select {
-		case <-timer.C:
-		case <-s.shouldShutdown:
-			return
-		}
-	}
+	// TODO: implement a proper probing & conflict resolution
 
 	// From RFC6762
 	//    The Multicast DNS responder MUST send at least two unsolicited
@@ -621,6 +568,8 @@ func (s *Server) probe() {
 	//    packet loss, a responder MAY send up to eight unsolicited responses,
 	//    provided that the interval between unsolicited responses increases by
 	//    at least a factor of two with every response sent.
+
+	timer := time.NewTimer(0)
 	timeout := time.Second
 	for i := 0; i < multicastRepetitions; i++ {
 		for _, intf := range s.ifaces {
