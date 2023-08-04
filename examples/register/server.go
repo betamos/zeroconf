@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"os"
@@ -28,29 +29,21 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer server.Shutdown()
-	log.Println("Published service:")
+	defer server.Close()
+
+	log.Println("Publishing service:")
 	log.Println("- Name:", *name)
 	log.Println("- Type:", *service)
 	log.Println("- Domain:", *domain)
 	log.Println("- Port:", *port)
 	log.Println("- TTL:", *ttl)
 
-	// Clean exit.
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	// Timeout timer.
-	var tc <-chan time.Time
-	if *waitTime > 0 {
-		tc = time.After(time.Second * time.Duration(*waitTime))
-	}
+	sigCtx, sigCancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer sigCancel()
+	ctx, cancel := context.WithTimeout(sigCtx, time.Second*time.Duration(*waitTime))
+	defer cancel()
 
-	select {
-	case <-sig:
-		// Exit by user
-	case <-tc:
-		// Exit by timeout
-	}
+	err = server.Serve(ctx)
+	log.Println("Server shut down:", err)
 
-	log.Println("Shutting down.")
 }

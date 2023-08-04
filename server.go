@@ -1,6 +1,8 @@
 package zeroconf
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -103,7 +105,6 @@ func Register(instance, service, domain string, port int, text []string, ifaces 
 	}
 
 	s.service = entry
-	s.start()
 
 	return s, nil
 }
@@ -159,7 +160,6 @@ func RegisterProxy(instance, service, domain string, port int, host string, ips 
 	}
 
 	s.service = entry
-	s.start()
 
 	return s, nil
 }
@@ -176,9 +176,6 @@ type Server struct {
 	ifaces   []net.Interface
 
 	shouldShutdown chan struct{}
-	shutdownLock   sync.Mutex
-	refCount       sync.WaitGroup
-	isShutdown     bool
 	ttl            uint32
 }
 
@@ -208,17 +205,40 @@ func newServer(ifaces []net.Interface, opts serverOpts) (*Server, error) {
 	return s, nil
 }
 
-func (s *Server) start() {
-	if s.ipv4conn != nil {
-		s.refCount.Add(1)
-		go s.recv4(s.ipv4conn)
-	}
-	if s.ipv6conn != nil {
-		s.refCount.Add(1)
-		go s.recv6(s.ipv6conn)
-	}
-	s.refCount.Add(1)
-	go s.announce()
+func (s *Server) Serve(ctx context.Context) error {
+	s.ipv4conn.SetDeadline(time.Time{})
+	s.ipv6conn.SetDeadline(time.Time{})
+
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancelCause(ctx)
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		s.recv4(ctx, s.ipv4conn)
+	}()
+	go func() {
+		defer wg.Done()
+		s.recv6(ctx, s.ipv6conn)
+	}()
+	go func() {
+		defer wg.Done()
+		if err := s.announce(ctx); err != nil {
+			cancel(err)
+		}
+	}()
+	<-ctx.Done()
+	now := time.Now()
+	s.ipv4conn.SetDeadline(now)
+	s.ipv6conn.SetDeadline(now)
+	wg.Wait()
+
+	s.ipv4conn.SetWriteDeadline(now.Add(10 * time.Millisecond))
+	s.ipv6conn.SetWriteDeadline(now.Add(10 * time.Millisecond))
+	return errors.Join(context.Cause(ctx), s.unregister())
+}
+
+func (s *Server) Close() error {
+	return errors.Join(s.ipv4conn.Close(), s.ipv6conn.Close())
 }
 
 // SetText updates and announces the TXT records
@@ -234,42 +254,15 @@ func (s *Server) TTL(ttl uint32) {
 	s.ttl = ttl
 }
 
-// Shutdown closes all udp connections and unregisters the service
-func (s *Server) Shutdown() {
-	s.shutdownLock.Lock()
-	defer s.shutdownLock.Unlock()
-	if s.isShutdown {
-		return
-	}
-
-	if err := s.unregister(); err != nil {
-		log.Printf("failed to unregister: %s", err)
-	}
-
-	close(s.shouldShutdown)
-
-	if s.ipv4conn != nil {
-		s.ipv4conn.Close()
-	}
-	if s.ipv6conn != nil {
-		s.ipv6conn.Close()
-	}
-
-	// Wait for connection and routines to be closed
-	s.refCount.Wait()
-	s.isShutdown = true
-}
-
 // recv4 is a long running routine to receive packets from an interface
-func (s *Server) recv4(c *ipv4.PacketConn) {
-	defer s.refCount.Done()
+func (s *Server) recv4(ctx context.Context, c *ipv4.PacketConn) {
 	if c == nil {
 		return
 	}
 	buf := make([]byte, 65536)
 	for {
 		select {
-		case <-s.shouldShutdown:
+		case <-ctx.Done():
 			return
 		default:
 			var ifIndex int
@@ -286,15 +279,14 @@ func (s *Server) recv4(c *ipv4.PacketConn) {
 }
 
 // recv6 is a long running routine to receive packets from an interface
-func (s *Server) recv6(c *ipv6.PacketConn) {
-	defer s.refCount.Done()
+func (s *Server) recv6(ctx context.Context, c *ipv6.PacketConn) {
 	if c == nil {
 		return
 	}
 	buf := make([]byte, 65536)
 	for {
 		select {
-		case <-s.shouldShutdown:
+		case <-ctx.Done():
 			return
 		default:
 			var ifIndex int
@@ -558,8 +550,7 @@ func (s *Server) serviceTypeName(resp *dns.Msg, ttl uint32) {
 }
 
 // Perform probing & announcement
-func (s *Server) announce() {
-	defer s.refCount.Done()
+func (s *Server) announce(ctx context.Context) error {
 	// TODO: implement a proper probing & conflict resolution
 
 	// From RFC6762
@@ -569,7 +560,6 @@ func (s *Server) announce() {
 	//    provided that the interval between unsolicited responses increases by
 	//    at least a factor of two with every response sent.
 
-	timer := time.NewTimer(0)
 	timeout := time.Second
 	for i := 0; i < multicastRepetitions; i++ {
 		for _, intf := range s.ifaces {
@@ -581,17 +571,15 @@ func (s *Server) announce() {
 			resp.Extra = []dns.RR{}
 			s.composeLookupAnswers(resp, s.ttl, intf.Index, true)
 			if err := s.multicastResponse(resp, intf.Index); err != nil {
-				log.Println("[ERR] zeroconf: failed to send announcement:", err.Error())
+				log.Printf("[ERR] zeroconf: failed to send announcement: %v\n", err)
 			}
 		}
-		timer.Reset(timeout)
-		select {
-		case <-timer.C:
-		case <-s.shouldShutdown:
-			return
+		if err := sleepContext(ctx, timeout); err != nil {
+			return err
 		}
 		timeout *= 2
 	}
+	return nil
 }
 
 // announceText sends a Text announcement with cache flush enabled

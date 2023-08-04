@@ -1,12 +1,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
-
 	"time"
 
 	"github.com/betamos/zeroconf/v2"
@@ -30,8 +30,9 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	defer server.Shutdown()
-	log.Println("Published proxy service:")
+	defer server.Close()
+
+	log.Println("Publishing proxy service:")
 	log.Println("- Name:", *name)
 	log.Println("- Type:", *service)
 	log.Println("- Domain:", *domain)
@@ -40,21 +41,11 @@ func main() {
 	log.Println("- IP:", *ip)
 	log.Println("- TTL:", *ttl)
 
-	// Clean exit.
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	// Timeout timer.
-	var tc <-chan time.Time
-	if *waitTime > 0 {
-		tc = time.After(time.Second * time.Duration(*waitTime))
-	}
+	sigCtx, sigCancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer sigCancel()
+	ctx, cancel := context.WithTimeout(sigCtx, time.Second*time.Duration(*waitTime))
+	defer cancel()
 
-	select {
-	case <-sig:
-		// Exit by user
-	case <-tc:
-		// Exit by timeout
-	}
-
-	log.Println("Shutting down.")
+	err = server.Serve(ctx)
+	log.Println("Server shut down:", err)
 }
