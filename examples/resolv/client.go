@@ -18,6 +18,10 @@ var (
 func main() {
 	flag.Parse()
 
+	conf := &zeroconf.Config{
+		Domain: *domain,
+	}
+
 	entries := make(chan *zeroconf.ServiceEntry)
 	go func(results <-chan *zeroconf.ServiceEntry) {
 		for entry := range results {
@@ -33,7 +37,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(*waitTime))
 	defer cancel()
 	// Discover all services on the network (e.g. _workstation._tcp)
-	err := zeroconf.Browse(ctx, *service, *domain, entries, zeroconf.Unannouncements(), zeroconf.SelectIPTraffic(zeroconf.IPv4AndIPv6))
+	err := zeroconf.Browse(ctx, *service, entries, conf)
 	if err != nil {
 		log.Fatalln("Failed to browse:", err.Error())
 	}

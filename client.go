@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -28,132 +28,84 @@ var initialQueryInterval = 4 * time.Second
 
 // Client structure encapsulates both IPv4/IPv6 UDP connections.
 type client struct {
-	conn            *dualConn
+	conn *dualConn
+
+	service *ServiceRecord
+	entries chan<- *ServiceEntry // Entries Channel
+
+	isBrowsing      bool
+	stopProbing     chan struct{}
+	once            sync.Once
 	unannouncements bool
-}
-
-type clientOpts struct {
-	listenOn        IPType
-	ifaces          []net.Interface
-	unannouncements bool
-}
-
-// ClientOption fills the option struct to configure intefaces, etc.
-type ClientOption func(*clientOpts)
-
-// SelectIPTraffic selects the type of IP packets (IPv4, IPv6, or both) this
-// instance listens for.
-// This does not guarantee that only mDNS entries of this sepcific
-// type passes. E.g. typical mDNS packets distributed via IPv4, may contain
-// both DNS A and AAAA entries.
-func SelectIPTraffic(t IPType) ClientOption {
-	return func(o *clientOpts) {
-		o.listenOn = t
-	}
-}
-
-// SelectIfaces selects the interfaces to query for mDNS records
-func SelectIfaces(ifaces []net.Interface) ClientOption {
-	return func(o *clientOpts) {
-		o.ifaces = ifaces
-	}
-}
-
-// Emit an entry with an expiry in the past if a previously emitted entry is unannounced
-// or if its TTL expires. With unannouncements, you won't see refreshed services, only presence
-// changes. This gives you (a) earlier detection of disconnected clients and (b) you don't need to
-// maintain any expiry timers yourself.
-func Unannouncements() ClientOption {
-	return func(o *clientOpts) {
-		o.unannouncements = true
-	}
 }
 
 // Browse for all services of a given type in a given domain.
 // Received entries are sent on the entries channel.
 // It blocks until the context is canceled (or an error occurs).
-func Browse(ctx context.Context, service, domain string, entries chan<- *ServiceEntry, opts ...ClientOption) error {
-	cl, err := newClient(applyOpts(opts...))
+func Browse(ctx context.Context, service string, entries chan<- *ServiceEntry, conf *Config) error {
+	if conf == nil {
+		conf = new(Config)
+	}
+	conn, err := newDualConn(conf.Interfaces, conf.ipType())
 	if err != nil {
 		return err
 	}
-	params := defaultParams(service)
-	if domain != "" {
-		params.Domain = domain
+	cl := &client{
+		entries:         entries,
+		service:         newServiceRecord("", service, conf.domain()),
+		conn:            conn,
+		unannouncements: true,
+		isBrowsing:      true,
 	}
-	params.Entries = entries
-	params.isBrowsing = true
-	return cl.run(ctx, params)
+	return cl.run(ctx)
 }
 
 // Lookup a specific service by its name and type in a given domain.
 // Received entries are sent on the entries channel.
 // It blocks until the context is canceled (or an error occurs).
-func Lookup(ctx context.Context, instance, service, domain string, entries chan<- *ServiceEntry, opts ...ClientOption) error {
-	cl, err := newClient(applyOpts(opts...))
+func Lookup(ctx context.Context, instance, service string, entries chan<- *ServiceEntry, conf *Config) error {
+	if conf == nil {
+		conf = new(Config)
+	}
+	conn, err := newDualConn(conf.Interfaces, conf.ipType())
 	if err != nil {
 		return err
 	}
-	params := defaultParams(service)
-	params.Instance = instance
-	if domain != "" {
-		params.Domain = domain
+	cl := &client{
+		entries:         entries,
+		service:         newServiceRecord(instance, service, conf.domain()),
+		conn:            conn,
+		unannouncements: true,
+		isBrowsing:      false,
+		stopProbing:     make(chan struct{}),
 	}
-	params.Entries = entries
-	return cl.run(ctx, params)
+	return cl.run(ctx)
 }
 
-func applyOpts(options ...ClientOption) clientOpts {
-	// Apply default configuration and load supplied options.
-	var conf = clientOpts{
-		listenOn: IPv4AndIPv6,
-	}
-	for _, o := range options {
-		if o != nil {
-			o(&conf)
-		}
-	}
-	return conf
-}
-
-func (c *client) run(ctx context.Context, params *lookupParams) error {
+func (c *client) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		c.mainloop(ctx, params)
+		c.mainloop(ctx)
 	}()
 
 	// If previous probe was ok, it should be fine now. In case of an error later on,
 	// the entries' queue is closed.
-	err := c.periodicQuery(ctx, params)
+	err := c.periodicQuery(ctx)
 	cancel()
 	<-done
 	return err
 }
 
-// defaultParams returns a default set of QueryParams.
-func defaultParams(service string) *lookupParams {
-	return newLookupParams("", service, "local", false, make(chan *ServiceEntry))
-}
-
-// Client structure constructor
-func newClient(opts clientOpts) (*client, error) {
-	conn, err := newDualConn(opts.ifaces, opts.listenOn)
-	if err != nil {
-		return nil, err
-	}
-
-	return &client{
-		conn:            conn,
-		unannouncements: opts.unannouncements,
-	}, nil
+func (c *client) disableProbing() {
+	c.once.Do(func() { close(c.stopProbing) })
 }
 
 var cleanupFreq = 10 * time.Second
 
 // Start listeners and waits for the shutdown signal from exit channel
-func (c *client) mainloop(ctx context.Context, params *lookupParams) {
+func (c *client) mainloop(ctx context.Context) {
 	// start listening for responses
 	msgCh := make(chan MsgMeta, 32)
 
@@ -163,6 +115,8 @@ func (c *client) mainloop(ctx context.Context, params *lookupParams) {
 	sentEntries := make(map[string]*ServiceEntry)
 
 	ticker := time.NewTicker(cleanupFreq)
+
+	s := c.service // shorthand
 	defer ticker.Stop()
 	for {
 		var entries map[string]*ServiceEntry
@@ -170,14 +124,14 @@ func (c *client) mainloop(ctx context.Context, params *lookupParams) {
 		select {
 		case <-ctx.Done():
 			// Context expired. Notify subscriber that we are done here.
-			params.done()
+			close(c.entries)
 			c.shutdown()
 			return
 		case t := <-ticker.C:
 			for k, e := range sentEntries {
 				if t.After(e.Expiry) {
 					if c.unannouncements {
-						params.Entries <- e
+						c.entries <- e
 					}
 					delete(sentEntries, k)
 				}
@@ -192,45 +146,45 @@ func (c *client) mainloop(ctx context.Context, params *lookupParams) {
 			for _, answer := range sections {
 				switch rr := answer.(type) {
 				case *dns.PTR:
-					if params.ServiceName() != rr.Hdr.Name {
+					if s.ServiceName() != rr.Hdr.Name {
 						continue
 					}
-					if params.ServiceInstanceName() != "" && params.ServiceInstanceName() != rr.Ptr {
+					if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Ptr {
 						continue
 					}
 					if _, ok := entries[rr.Ptr]; !ok {
 						entries[rr.Ptr] = newServiceEntry(
 							trimDot(strings.Replace(rr.Ptr, rr.Hdr.Name, "", -1)),
-							params.Service,
-							params.Domain)
+							s.Service,
+							s.Domain)
 					}
 					entries[rr.Ptr].Expiry = now.Add(time.Duration(rr.Hdr.Ttl) * time.Second)
 				case *dns.SRV:
-					if params.ServiceInstanceName() != "" && params.ServiceInstanceName() != rr.Hdr.Name {
+					if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Hdr.Name {
 						continue
-					} else if !strings.HasSuffix(rr.Hdr.Name, params.ServiceName()) {
+					} else if !strings.HasSuffix(rr.Hdr.Name, s.ServiceName()) {
 						continue
 					}
 					if _, ok := entries[rr.Hdr.Name]; !ok {
 						entries[rr.Hdr.Name] = newServiceEntry(
-							trimDot(strings.Replace(rr.Hdr.Name, params.ServiceName(), "", 1)),
-							params.Service,
-							params.Domain)
+							trimDot(strings.Replace(rr.Hdr.Name, s.ServiceName(), "", 1)),
+							s.Service,
+							s.Domain)
 					}
 					entries[rr.Hdr.Name].HostName = rr.Target
 					entries[rr.Hdr.Name].Port = int(rr.Port)
 					entries[rr.Hdr.Name].Expiry = now.Add(time.Duration(rr.Hdr.Ttl) * time.Second)
 				case *dns.TXT:
-					if params.ServiceInstanceName() != "" && params.ServiceInstanceName() != rr.Hdr.Name {
+					if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Hdr.Name {
 						continue
-					} else if !strings.HasSuffix(rr.Hdr.Name, params.ServiceName()) {
+					} else if !strings.HasSuffix(rr.Hdr.Name, s.ServiceName()) {
 						continue
 					}
 					if _, ok := entries[rr.Hdr.Name]; !ok {
 						entries[rr.Hdr.Name] = newServiceEntry(
-							trimDot(strings.Replace(rr.Hdr.Name, params.ServiceName(), "", 1)),
-							params.Service,
-							params.Domain)
+							trimDot(strings.Replace(rr.Hdr.Name, s.ServiceName(), "", 1)),
+							s.Service,
+							s.Domain)
 					}
 					entries[rr.Hdr.Name].Text = rr.Txt
 					entries[rr.Hdr.Name].Expiry = now.Add(time.Duration(rr.Hdr.Ttl) * time.Second)
@@ -259,7 +213,7 @@ func (c *client) mainloop(ctx context.Context, params *lookupParams) {
 			if !e.Expiry.After(now) {
 				// Implies TTL=0, meaning a "Goodbye Packet".
 				if _, ok := sentEntries[k]; ok && c.unannouncements {
-					params.Entries <- e
+					c.entries <- e
 				}
 				delete(sentEntries, k)
 				continue
@@ -274,7 +228,7 @@ func (c *client) mainloop(ctx context.Context, params *lookupParams) {
 
 			// If this is an DNS-SD query do not throw PTR away.
 			// It is expected to have only PTR for enumeration
-			if params.ServiceRecord.ServiceTypeName() != params.ServiceRecord.ServiceName() {
+			if s.ServiceTypeName() != s.ServiceName() {
 				// Require at least one resolved IP address for ServiceEntry
 				// TODO: wait some more time as chances are high both will arrive.
 				if len(e.AddrIPv4) == 0 && len(e.AddrIPv6) == 0 {
@@ -284,10 +238,10 @@ func (c *client) mainloop(ctx context.Context, params *lookupParams) {
 			// Submit entry to subscriber and cache it.
 			// This is also a point to possibly stop probing actively for a
 			// service entry.
-			params.Entries <- e
+			c.entries <- e
 			sentEntries[k] = e
-			if !params.isBrowsing {
-				params.disableProbing()
+			if !c.isBrowsing {
+				c.disableProbing()
 			}
 		}
 	}
@@ -302,9 +256,9 @@ func (c *client) shutdown() {
 // the main processing loop or some timeout/cancel fires.
 // TODO: move error reporting to shutdown function as periodicQuery is called from
 // go routine context.
-func (c *client) periodicQuery(ctx context.Context, params *lookupParams) error {
+func (c *client) periodicQuery(ctx context.Context) error {
 	// Do the first query immediately.
-	if err := c.query(params); err != nil {
+	if err := c.query(); err != nil {
 		return err
 	}
 
@@ -316,18 +270,18 @@ func (c *client) periodicQuery(ctx context.Context, params *lookupParams) error 
 		select {
 		case <-timer.C:
 			// Wait for next iteration.
-		case <-params.stopProbing:
+		case <-c.stopProbing:
 			// Chan is closed (or happened in the past).
 			// Done here. Received a matching mDNS entry.
 			return nil
 		case <-ctx.Done():
-			if params.isBrowsing {
+			if c.isBrowsing {
 				return nil
 			}
 			return ctx.Err()
 		}
 
-		if err := c.query(params); err != nil {
+		if err := c.query(); err != nil {
 			return err
 		}
 		// Exponential increase of the interval with jitter:
@@ -344,20 +298,21 @@ func (c *client) periodicQuery(ctx context.Context, params *lookupParams) error 
 
 // Performs the actual query by service name (browse) or service instance name (lookup),
 // start response listeners goroutines and loops over the entries channel.
-func (c *client) query(params *lookupParams) error {
+func (c *client) query() error {
 	var serviceName, serviceInstanceName string
-	serviceName = fmt.Sprintf("%s.%s.", trimDot(params.Service), trimDot(params.Domain))
+	s := c.service // shorthand
+	serviceName = fmt.Sprintf("%s.%s.", trimDot(s.Service), trimDot(s.Domain))
 
 	// send the query
 	m := new(dns.Msg)
-	if params.Instance != "" { // service instance name lookup
-		serviceInstanceName = fmt.Sprintf("%s.%s", params.Instance, serviceName)
+	if s.Instance != "" { // service instance name lookup
+		serviceInstanceName = fmt.Sprintf("%s.%s", s.Instance, serviceName)
 		m.Question = []dns.Question{
 			{Name: serviceInstanceName, Qtype: dns.TypeSRV, Qclass: dns.ClassINET},
 			{Name: serviceInstanceName, Qtype: dns.TypeTXT, Qclass: dns.ClassINET},
 		}
-	} else if len(params.Subtypes) > 0 { // service subtype browse
-		m.SetQuestion(params.Subtypes[0], dns.TypePTR)
+	} else if len(s.Subtypes) > 0 { // service subtype browse
+		m.SetQuestion(s.Subtypes[0], dns.TypePTR)
 	} else { // service name browse
 		m.SetQuestion(serviceName, dns.TypePTR)
 	}

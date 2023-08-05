@@ -3,7 +3,6 @@ package zeroconf
 import (
 	"fmt"
 	"net"
-	"sync"
 	"time"
 )
 
@@ -64,39 +63,6 @@ func newServiceRecord(instance, service, domain string) *ServiceRecord {
 	s.serviceTypeName = fmt.Sprintf("_services._dns-sd._udp.%s.", typeNameDomain)
 
 	return s
-}
-
-// lookupParams contains configurable properties to create a service discovery request
-type lookupParams struct {
-	ServiceRecord
-	Entries chan<- *ServiceEntry // Entries Channel
-
-	isBrowsing  bool
-	stopProbing chan struct{}
-	once        sync.Once
-}
-
-// newLookupParams constructs a lookupParams.
-func newLookupParams(instance, service, domain string, isBrowsing bool, entries chan<- *ServiceEntry) *lookupParams {
-	p := &lookupParams{
-		ServiceRecord: *newServiceRecord(instance, service, domain),
-		Entries:       entries,
-		isBrowsing:    isBrowsing,
-	}
-	if !isBrowsing {
-		p.stopProbing = make(chan struct{})
-	}
-	return p
-}
-
-// Notify subscriber that no more entries will arrive. Mostly caused
-// by an expired context.
-func (l *lookupParams) done() {
-	close(l.Entries)
-}
-
-func (l *lookupParams) disableProbing() {
-	l.once.Do(func() { close(l.stopProbing) })
 }
 
 // ServiceEntry represents a browse/lookup result for client API.

@@ -26,7 +26,13 @@ var (
 func main() {
 	flag.Parse()
 
-	server, err := zeroconf.RegisterProxy(*name, *service, *domain, *port, *host, []string{*ip}, []string{"txtv=0", "lo=1", "la=2"}, nil, zeroconf.TTL(uint32(*ttl)))
+	conf := &zeroconf.Config{
+		Text:   []string{"txtv=0", "lo=1", "la=2"},
+		TTL:    *ttl,
+		Domain: *domain,
+	}
+
+	server, err := zeroconf.RegisterProxy(*name, *service, *port, *host, []string{*ip}, conf)
 	if err != nil {
 		panic(err)
 	}

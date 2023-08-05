@@ -15,20 +15,22 @@ var (
 	mdnsPort    = 8888
 )
 
-func startMDNS(t *testing.T, port int, name, service, domain string) {
+var defaultConf = &Config{Text: []string{"txtv=0", "lo=1", "la=2"}, Domain: mdnsDomain}
+
+func startMDNS(t *testing.T, port int, name, service string, conf *Config) {
 	// 5353 is default mdns port
-	server, err := Register(name, service, domain, port, []string{"txtv=0", "lo=1", "la=2"}, nil)
+	server, err := Register(name, service, port, conf)
 	if err != nil {
 		t.Fatalf("error while registering mdns service: %s", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	go server.Serve(ctx)
 	t.Cleanup(cancel)
-	log.Printf("Published service: %s, type: %s, domain: %s", name, service, domain)
+	log.Printf("Published service: %s, type: %s, domain: %s", name, service, conf.Domain)
 }
 
 func TestQuickShutdown(t *testing.T) {
-	server, err := Register(mdnsName, mdnsService, mdnsDomain, mdnsPort, []string{"txtv=0", "lo=1", "la=2"}, nil)
+	server, err := Register(mdnsName, mdnsService, mdnsPort, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,12 +48,12 @@ func TestBasic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	startMDNS(t, mdnsPort, mdnsName, mdnsService, mdnsDomain)
+	startMDNS(t, mdnsPort, mdnsName, mdnsService, defaultConf)
 
 	time.Sleep(time.Second)
 
 	entries := make(chan *ServiceEntry, 100)
-	if err := Browse(ctx, mdnsService, mdnsDomain, entries); err != nil {
+	if err := Browse(ctx, mdnsService, entries, defaultConf); err != nil {
 		t.Fatalf("Expected browse success, but got %v", err)
 	}
 	<-ctx.Done()
@@ -85,7 +87,7 @@ func TestNoRegister(t *testing.T) {
 	}(entries)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	if err := Browse(ctx, mdnsService, mdnsDomain, entries); err != nil {
+	if err := Browse(ctx, mdnsService, entries, defaultConf); err != nil {
 		t.Fatalf("Expected browse success, but got %v", err)
 	}
 	<-ctx.Done()
@@ -97,12 +99,12 @@ func TestSubtype(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype, mdnsDomain)
+		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype, defaultConf)
 
 		time.Sleep(time.Second)
 
 		entries := make(chan *ServiceEntry, 100)
-		if err := Browse(ctx, mdnsSubtype, mdnsDomain, entries); err != nil {
+		if err := Browse(ctx, mdnsService, entries, defaultConf); err != nil {
 			t.Fatalf("Expected browse success, but got %v", err)
 		}
 		<-ctx.Done()
@@ -129,12 +131,12 @@ func TestSubtype(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype, mdnsDomain)
+		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype, defaultConf)
 
 		time.Sleep(time.Second)
 
 		entries := make(chan *ServiceEntry, 100)
-		if err := Browse(ctx, mdnsService, mdnsDomain, entries); err != nil {
+		if err := Browse(ctx, mdnsService, entries, defaultConf); err != nil {
 			t.Fatalf("Expected browse success, but got %v", err)
 		}
 		<-ctx.Done()
@@ -158,24 +160,22 @@ func TestSubtype(t *testing.T) {
 	})
 
 	t.Run("ttl", func(t *testing.T) {
-		origTTL := defaultTTL
+		conf := &Config{TTL: 1, Domain: mdnsDomain}
 		origCleanupFreq := cleanupFreq
 		origInitialQueryInterval := initialQueryInterval
 		t.Cleanup(func() {
-			defaultTTL = origTTL
 			cleanupFreq = origCleanupFreq
 			initialQueryInterval = origInitialQueryInterval
 		})
-		defaultTTL = 1 // 1 second
 		initialQueryInterval = 100 * time.Millisecond
 		cleanupFreq = 100 * time.Millisecond
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype, mdnsDomain)
+		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype, conf)
 
 		entries := make(chan *ServiceEntry, 100)
-		if err := Browse(ctx, mdnsService, mdnsDomain, entries); err != nil {
+		if err := Browse(ctx, mdnsService, entries, defaultConf); err != nil {
 			t.Fatalf("Expected browse success, but got %v", err)
 		}
 

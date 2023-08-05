@@ -15,47 +15,74 @@ import (
 )
 
 const (
-	// Number of Multicast responses sent for a query message (default: 1 < x < 9)
-	multicastRepetitions = 2
+	// RFC6762 Section 8.3: The Multicast DNS responder MUST send at least two unsolicited
+	// responses
+	announceCount = 2
+
+	// RFC6762 Section 10: A/AAAA/PTR/SRV records SHOULD use TTL of 120 s, to account for
+	// network interface and IP address changes. For simplicity, all records use the same TTL.
+	defaultTTL uint32 = 120
 )
 
-// RFC6762 Section 10 says A/AAAA/PTR/SRV records SHOULD use TTL of 120 s, to account for
-// network interface and IP address changes. For simplicity, all records use the same TTL.
-var defaultTTL uint32 = 120
+type Config struct {
+	// IP protocol to use, default = IPv4AndIPv6
+	IPType IPType
 
-type serverOpts struct {
-	ttl uint32
+	// Interfaces to use for mDNS, by default all multicast-enabled interfaces
+	Interfaces []net.Interface
+
+	// Server TTL in seconds, default = 120
+	TTL int
+
+	// Server TXT entry
+	Text []string
+
+	// Server hostname, default = os.Hostname()
+	Hostname string
+
+	// Server domain, defaults = "local."
+	Domain string
 }
 
-func applyServerOpts(options ...ServerOption) serverOpts {
-	// Apply default configuration and load supplied options.
-	var conf = serverOpts{
-		ttl: defaultTTL,
+var defaultHostname, _ = os.Hostname()
+
+func (c *Config) ipType() IPType {
+	if c.IPType == 0 {
+		return IPv4AndIPv6
 	}
-	for _, o := range options {
-		if o != nil {
-			o(&conf)
-		}
-	}
-	return conf
+	return c.IPType
 }
 
-// ServerOption fills the option struct.
-type ServerOption func(*serverOpts)
-
-// TTL sets the TTL for DNS replies.
-func TTL(ttl uint32) ServerOption {
-	return func(o *serverOpts) {
-		o.ttl = ttl
+func (c *Config) ttl() uint32 {
+	if c.TTL <= 0 {
+		return defaultTTL
 	}
+	return uint32(c.TTL)
+}
+
+func (c *Config) domain() string {
+	if c.Domain == "" {
+		return "local."
+	}
+	return c.Domain
+}
+
+func (c *Config) hostname() string {
+	if c.Hostname == "" {
+		return defaultHostname
+	}
+	return c.Hostname
 }
 
 // Register a service by given arguments. This call will take the system's hostname
 // and lookup IP by that hostname.
-func Register(instance, service, domain string, port int, text []string, ifaces []net.Interface, opts ...ServerOption) (*Server, error) {
-	entry := newServiceEntry(instance, service, domain)
+func Register(instance, service string, port int, conf *Config) (*Server, error) {
+	if conf == nil {
+		conf = new(Config)
+	}
+	entry := newServiceEntry(instance, service, conf.domain())
 	entry.Port = port
-	entry.Text = text
+	entry.Text = conf.Text
 
 	if entry.Instance == "" {
 		return nil, fmt.Errorf("missing service instance name")
@@ -71,7 +98,7 @@ func Register(instance, service, domain string, port int, text []string, ifaces 
 	}
 
 	var err error
-	entry.HostName, err = os.Hostname()
+	entry.HostName = conf.hostname()
 	if err != nil {
 		return nil, fmt.Errorf("could not determine host")
 	}
@@ -80,32 +107,34 @@ func Register(instance, service, domain string, port int, text []string, ifaces 
 		entry.HostName = fmt.Sprintf("%s.%s.", trimDot(entry.HostName), trimDot(entry.Domain))
 	}
 
-	conn, err := newDualConn(ifaces, IPv4AndIPv6)
+	conn, err := newDualConn(conf.Interfaces, conf.ipType())
 	if err != nil {
 		return nil, err
 	}
 
 	entry.AddrIPv4, entry.AddrIPv6 = conn.Addrs()
 
-	// if entry.AddrIPv4 == nil && entry.AddrIPv6 == nil {
-	// 	return nil, fmt.Errorf("could not determine host IP addresses")
-	// }
-
-	serverOpts := applyServerOpts(opts...)
+	if entry.AddrIPv4 == nil && entry.AddrIPv6 == nil {
+		conn.Close()
+		return nil, fmt.Errorf("could not determine host IP addresses")
+	}
 
 	return &Server{
 		conn:    conn,
-		ttl:     serverOpts.ttl,
+		ttl:     conf.ttl(),
 		service: entry,
 	}, nil
 }
 
 // RegisterProxy registers a service proxy. This call will skip the hostname/IP lookup and
 // will use the provided values.
-func RegisterProxy(instance, service, domain string, port int, host string, ips []string, text []string, ifaces []net.Interface, opts ...ServerOption) (*Server, error) {
-	entry := newServiceEntry(instance, service, domain)
+func RegisterProxy(instance, service string, port int, host string, ips []string, conf *Config) (*Server, error) {
+	if conf == nil {
+		conf = new(Config)
+	}
+	entry := newServiceEntry(instance, service, conf.domain())
 	entry.Port = port
-	entry.Text = text
+	entry.Text = conf.Text
 	entry.HostName = host
 
 	if entry.Instance == "" {
@@ -141,15 +170,14 @@ func RegisterProxy(instance, service, domain string, port int, host string, ips 
 		}
 	}
 
-	conn, err := newDualConn(ifaces, IPv4AndIPv6)
+	conn, err := newDualConn(conf.Interfaces, conf.IPType)
 	if err != nil {
 		return nil, err
 	}
-	serverOpts := applyServerOpts(opts...)
 
 	return &Server{
 		conn:    conn,
-		ttl:     serverOpts.ttl,
+		ttl:     conf.ttl(),
 		service: entry,
 	}, nil
 }
@@ -192,19 +220,6 @@ func (s *Server) Serve(ctx context.Context) error {
 
 func (s *Server) Close() error {
 	return s.conn.Close()
-}
-
-// SetText updates and announces the TXT records
-func (s *Server) SetText(text []string) {
-	s.service.Text = text
-	s.announceText()
-}
-
-// TTL sets the TTL for DNS replies
-//
-// Deprecated: This method is racy. Use the TTL server option instead.
-func (s *Server) TTL(ttl uint32) {
-	s.ttl = ttl
 }
 
 // recv4 is a long running routine to receive packets from an interface
@@ -478,7 +493,7 @@ func (s *Server) announce(ctx context.Context) error {
 	resp.Answer = []dns.RR{}
 	resp.Extra = []dns.RR{}
 	s.composeLookupAnswers(resp, s.ttl, true)
-	for i := 0; i < multicastRepetitions; i++ {
+	for i := 0; i < announceCount; i++ {
 		if err := s.conn.WriteMulticastAll(resp); err != nil {
 			log.Printf("[ERR] zeroconf: failed to send announcement: %v\n", err)
 		}
@@ -488,25 +503,6 @@ func (s *Server) announce(ctx context.Context) error {
 		timeout *= 2
 	}
 	return nil
-}
-
-// announceText sends a Text announcement with cache flush enabled
-func (s *Server) announceText() {
-	resp := new(dns.Msg)
-	resp.MsgHdr.Response = true
-
-	txt := &dns.TXT{
-		Hdr: dns.RR_Header{
-			Name:   s.service.ServiceInstanceName(),
-			Rrtype: dns.TypeTXT,
-			Class:  dns.ClassINET | qClassCacheFlush,
-			Ttl:    s.ttl,
-		},
-		Txt: s.service.Text,
-	}
-
-	resp.Answer = []dns.RR{txt}
-	s.conn.WriteMulticastAll(resp)
 }
 
 func (s *Server) unregister() error {
