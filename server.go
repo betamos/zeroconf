@@ -438,16 +438,16 @@ func (s *Server) composeLookupAnswers(resp *dns.Msg, ttl uint32, flushCache bool
 	}
 
 	for _, subtype := range s.service.Subtypes {
-		resp.Answer = append(resp.Answer,
-			&dns.PTR{
-				Hdr: dns.RR_Header{
-					Name:   subtype,
-					Rrtype: dns.TypePTR,
-					Class:  dns.ClassINET,
-					Ttl:    ttl,
-				},
-				Ptr: s.service.ServiceInstanceName(),
-			})
+		ptr := &dns.PTR{
+			Hdr: dns.RR_Header{
+				Name:   subtype,
+				Rrtype: dns.TypePTR,
+				Class:  dns.ClassINET,
+				Ttl:    ttl,
+			},
+			Ptr: s.service.ServiceInstanceName(),
+		}
+		resp.Answer = append(resp.Answer, ptr)
 	}
 
 	resp.Answer = s.appendAddrs(resp.Answer, ttl, flushCache)
@@ -490,8 +490,6 @@ func (s *Server) announce(ctx context.Context) error {
 	resp.MsgHdr.Response = true
 	// TODO: make response authoritative if we are the publisher
 	resp.Compress = true
-	resp.Answer = []dns.RR{}
-	resp.Extra = []dns.RR{}
 	s.composeLookupAnswers(resp, s.ttl, true)
 	for i := 0; i < announceCount; i++ {
 		if err := s.conn.WriteMulticastAll(resp); err != nil {
@@ -508,8 +506,7 @@ func (s *Server) announce(ctx context.Context) error {
 func (s *Server) unregister() error {
 	resp := new(dns.Msg)
 	resp.MsgHdr.Response = true
-	resp.Answer = []dns.RR{}
-	resp.Extra = []dns.RR{}
+	resp.Compress = true
 	s.composeLookupAnswers(resp, 0, true)
 	return s.conn.WriteMulticastAll(resp)
 }
