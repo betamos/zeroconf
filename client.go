@@ -257,7 +257,13 @@ func (c *client) shutdown() {
 // TODO: move error reporting to shutdown function as periodicQuery is called from
 // go routine context.
 func (c *client) periodicQuery(ctx context.Context) error {
-	// Do the first query immediately.
+	if c.isBrowsing {
+		// RFC6762 Section 8.3: [...] a Multicast DNS querier SHOULD also delay the first query of
+		// the series by a randomly chosen amount in the range 20-120 ms.
+		if err := sleepContext(ctx, time.Duration(20+rand.Int63n(100))*time.Millisecond); err != nil {
+			return err
+		}
+	}
 	if err := c.query(); err != nil {
 		return err
 	}
