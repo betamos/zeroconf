@@ -25,7 +25,7 @@ func main() {
 			if entry.Expiry.After(time.Now()) {
 				sym = "[+]"
 			}
-			log.Println(sym, entry.ServiceInstanceName(), entry.AddrIPv4, entry.Port)
+			log.Println(sym, entry.ServiceInstanceName(), entry.AddrIPv4, entry.AddrIPv6, entry.Port)
 		}
 		log.Println("No more entries.")
 	}(entries)
@@ -33,7 +33,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(*waitTime))
 	defer cancel()
 	// Discover all services on the network (e.g. _workstation._tcp)
-	err := zeroconf.Browse(ctx, *service, *domain, entries, zeroconf.Unannouncements(), zeroconf.SelectIPTraffic(zeroconf.IPv4))
+	err := zeroconf.Browse(ctx, *service, *domain, entries, zeroconf.Unannouncements(), zeroconf.SelectIPTraffic(zeroconf.IPv4AndIPv6))
 	if err != nil {
 		log.Fatalln("Failed to browse:", err.Error())
 	}

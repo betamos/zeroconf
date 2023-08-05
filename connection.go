@@ -1,9 +1,11 @@
 package zeroconf
 
 import (
-	"fmt"
 	"net"
+	"runtime"
+	"time"
 
+	"github.com/miekg/dns"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 )
@@ -35,85 +37,141 @@ var (
 	}
 )
 
-func joinUdp6Multicast(interfaces []net.Interface) (*ipv6.PacketConn, error) {
+type conn interface {
+	JoinMulticast(net.Interface) error
+	ReadMulticast(buf []byte) (n int, from net.Addr, ifIndex int, err error)
+	WriteMulticast(buf []byte, iface net.Interface) (n int, err error)
+	WriteUnicast(buf []byte, ifIndex int, addr net.Addr) (n int, err error)
+	SetReadDeadline(time.Time) error
+	SetWriteDeadline(time.Time) error
+	SetDeadline(time.Time) error
+	Close() error
+}
+
+type MsgMeta struct {
+	*dns.Msg
+	From    net.Addr
+	IfIndex int
+}
+
+type conn4 struct {
+	*ipv4.PacketConn
+}
+
+var _ conn = &conn4{}
+
+func newConn4() (c *conn4, err error) {
+	// IPv4 interfaces
+
+	udpConn, err := net.ListenUDP("udp4", mdnsWildcardAddrIPv4)
+	if err != nil {
+		return nil, err
+	}
+	pc := ipv4.NewPacketConn(udpConn)
+	_ = pc.SetControlMessage(ipv4.FlagInterface, true)
+	_ = pc.SetMulticastTTL(255)
+	return &conn4{pc}, nil
+}
+
+func (c *conn4) JoinMulticast(iface net.Interface) (err error) {
+	return c.JoinGroup(&iface, &net.UDPAddr{IP: mdnsGroupIPv4})
+}
+
+func (c *conn4) ReadMulticast(buf []byte) (n int, from net.Addr, ifIndex int, err error) {
+	var cm *ipv4.ControlMessage
+	n, cm, from, err = c.ReadFrom(buf)
+	if cm != nil {
+		ifIndex = cm.IfIndex
+	}
+	return
+}
+
+func (c *conn4) WriteMulticast(buf []byte, iface net.Interface) (int, error) {
+	// See https://pkg.go.dev/golang.org/x/net/ipv4#pkg-note-BUG
+	// As of Golang 1.18.4
+	// On Windows, the ControlMessage for ReadFrom and WriteTo methods of PacketConn is not implemented.
+	var wcm ipv4.ControlMessage
+	switch runtime.GOOS {
+	case "darwin", "ios", "linux":
+		wcm.IfIndex = iface.Index
+	default:
+		if err := c.SetMulticastInterface(&iface); err != nil {
+			return 0, err
+		}
+	}
+	return c.WriteTo(buf, &wcm, ipv4Addr)
+}
+
+func (c *conn4) WriteUnicast(buf []byte, ifIndex int, addr net.Addr) (int, error) {
+	wcm := &ipv4.ControlMessage{IfIndex: ifIndex}
+	return c.WriteTo(buf, wcm, addr)
+}
+
+type conn6 struct {
+	*ipv6.PacketConn
+}
+
+var _ conn = &conn6{}
+
+func newConn6() (c *conn6, err error) {
 	udpConn, err := net.ListenUDP("udp6", mdnsWildcardAddrIPv6)
 	if err != nil {
 		return nil, err
 	}
-
-	// Join multicast groups to receive announcements
-	pkConn := ipv6.NewPacketConn(udpConn)
-	pkConn.SetControlMessage(ipv6.FlagInterface, true)
-
-	if len(interfaces) == 0 {
-		interfaces = listMulticastInterfaces()
-	}
-	// log.Println("Using multicast interfaces: ", interfaces)
-
-	var failedJoins int
-	for _, iface := range interfaces {
-		if err := pkConn.JoinGroup(&iface, &net.UDPAddr{IP: mdnsGroupIPv6}); err != nil {
-			// log.Println("Udp6 JoinGroup failed for iface ", iface)
-			failedJoins++
-		}
-	}
-	if failedJoins == len(interfaces) {
-		pkConn.Close()
-		return nil, fmt.Errorf("udp6: failed to join any of these interfaces: %v", interfaces)
-	}
-
-	_ = pkConn.SetMulticastHopLimit(255)
-
-	return pkConn, nil
+	pc := ipv6.NewPacketConn(udpConn)
+	_ = pc.SetControlMessage(ipv6.FlagInterface, true)
+	_ = pc.SetMulticastHopLimit(255)
+	return &conn6{pc}, nil
 }
 
-func joinUdp4Multicast(interfaces []net.Interface) (*ipv4.PacketConn, error) {
-	udpConn, err := net.ListenUDP("udp4", mdnsWildcardAddrIPv4)
-	if err != nil {
-		// log.Printf("[ERR] bonjour: Failed to bind to udp4 mutlicast: %v", err)
-		return nil, err
-	}
-
-	// Join multicast groups to receive announcements
-	pkConn := ipv4.NewPacketConn(udpConn)
-	pkConn.SetControlMessage(ipv4.FlagInterface, true)
-
-	if len(interfaces) == 0 {
-		interfaces = listMulticastInterfaces()
-	}
-	// log.Println("Using multicast interfaces: ", interfaces)
-
-	var failedJoins int
-	for _, iface := range interfaces {
-		if err := pkConn.JoinGroup(&iface, &net.UDPAddr{IP: mdnsGroupIPv4}); err != nil {
-			// log.Println("Udp4 JoinGroup failed for iface ", iface)
-			failedJoins++
-		}
-	}
-	if failedJoins == len(interfaces) {
-		pkConn.Close()
-		return nil, fmt.Errorf("udp4: failed to join any of these interfaces: %v", interfaces)
-	}
-
-	_ = pkConn.SetMulticastTTL(255)
-
-	return pkConn, nil
+func (c *conn6) JoinMulticast(iface net.Interface) (err error) {
+	return c.JoinGroup(&iface, &net.UDPAddr{IP: mdnsGroupIPv6})
 }
 
-func listMulticastInterfaces() []net.Interface {
-	var interfaces []net.Interface
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil
+func (c *conn6) ReadMulticast(buf []byte) (n int, from net.Addr, ifIndex int, err error) {
+	var cm *ipv6.ControlMessage
+	n, cm, from, err = c.ReadFrom(buf)
+	if cm != nil {
+		ifIndex = cm.IfIndex
 	}
-	for _, ifi := range ifaces {
-		if (ifi.Flags & net.FlagUp) == 0 {
-			continue
-		}
-		if (ifi.Flags & net.FlagMulticast) > 0 {
-			interfaces = append(interfaces, ifi)
-		}
-	}
+	return
+}
 
-	return interfaces
+func (c *conn6) WriteMulticast(buf []byte, iface net.Interface) (int, error) {
+	// See https://pkg.go.dev/golang.org/x/net/ipv4#pkg-note-BUG
+	// As of Golang 1.18.4
+	// On Windows, the ControlMessage for ReadFrom and WriteTo methods of PacketConn is not implemented.
+	var wcm ipv6.ControlMessage
+	switch runtime.GOOS {
+	case "darwin", "ios", "linux":
+		wcm.IfIndex = iface.Index
+	default:
+		if err := c.SetMulticastInterface(&iface); err != nil {
+			return 0, err
+		}
+	}
+	return c.WriteTo(buf, &wcm, ipv6Addr)
+}
+
+func (c *conn6) WriteUnicast(buf []byte, ifIndex int, addr net.Addr) (int, error) {
+	wcm := &ipv6.ControlMessage{IfIndex: ifIndex}
+	return c.WriteTo(buf, wcm, addr)
+}
+
+func isMulticastInterface(iface net.Interface) bool {
+	return (iface.Flags&net.FlagUp) > 0 && (iface.Flags&net.FlagMulticast) > 0
+}
+
+func addrType(addr net.Addr) IPType {
+	if addr == nil {
+		return IPv4AndIPv6
+	}
+	ua := addr.(*net.UDPAddr)
+	if ua == nil {
+		return 0
+	}
+	if ua.IP.To4() != nil {
+		return IPv4
+	}
+	return IPv6
 }

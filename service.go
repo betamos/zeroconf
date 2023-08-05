@@ -38,7 +38,7 @@ func (s *ServiceRecord) ServiceTypeName() string {
 }
 
 // newServiceRecord constructs a ServiceRecord.
-func newServiceRecord(instance, service string, domain string) *ServiceRecord {
+func newServiceRecord(instance, service, domain string) *ServiceRecord {
 	service, subtypes := parseSubtypes(service)
 	s := &ServiceRecord{
 		Instance:    instance,

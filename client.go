@@ -3,16 +3,12 @@ package zeroconf
 import (
 	"context"
 	"fmt"
-	"log"
 	"math/rand"
 	"net"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/miekg/dns"
-	"golang.org/x/net/ipv4"
-	"golang.org/x/net/ipv6"
 )
 
 // IPType specifies the IP traffic the client listens for.
@@ -32,9 +28,7 @@ var initialQueryInterval = 4 * time.Second
 
 // Client structure encapsulates both IPv4/IPv6 UDP connections.
 type client struct {
-	ipv4conn        *ipv4.PacketConn
-	ipv6conn        *ipv6.PacketConn
-	ifaces          []net.Interface
+	conn            *dualConn
 	unannouncements bool
 }
 
@@ -145,33 +139,13 @@ func defaultParams(service string) *lookupParams {
 
 // Client structure constructor
 func newClient(opts clientOpts) (*client, error) {
-	ifaces := opts.ifaces
-	if len(ifaces) == 0 {
-		ifaces = listMulticastInterfaces()
-	}
-	// IPv4 interfaces
-	var ipv4conn *ipv4.PacketConn
-	if (opts.listenOn & IPv4) > 0 {
-		var err error
-		ipv4conn, err = joinUdp4Multicast(ifaces)
-		if err != nil {
-			return nil, err
-		}
-	}
-	// IPv6 interfaces
-	var ipv6conn *ipv6.PacketConn
-	if (opts.listenOn & IPv6) > 0 {
-		var err error
-		ipv6conn, err = joinUdp6Multicast(ifaces)
-		if err != nil {
-			return nil, err
-		}
+	conn, err := newDualConn(opts.ifaces, opts.listenOn)
+	if err != nil {
+		return nil, err
 	}
 
 	return &client{
-		ipv4conn:        ipv4conn,
-		ipv6conn:        ipv6conn,
-		ifaces:          ifaces,
+		conn:            conn,
 		unannouncements: opts.unannouncements,
 	}, nil
 }
@@ -181,13 +155,9 @@ var cleanupFreq = 10 * time.Second
 // Start listeners and waits for the shutdown signal from exit channel
 func (c *client) mainloop(ctx context.Context, params *lookupParams) {
 	// start listening for responses
-	msgCh := make(chan *dns.Msg, 32)
-	if c.ipv4conn != nil {
-		go c.recv(ctx, c.ipv4conn, msgCh)
-	}
-	if c.ipv6conn != nil {
-		go c.recv(ctx, c.ipv6conn, msgCh)
-	}
+	msgCh := make(chan MsgMeta, 32)
+
+	go c.conn.RunReader(msgCh)
 
 	// Iterate through channels from listeners goroutines
 	sentEntries := make(map[string]*ServiceEntry)
@@ -325,64 +295,7 @@ func (c *client) mainloop(ctx context.Context, params *lookupParams) {
 
 // Shutdown client will close currently open connections and channel implicitly.
 func (c *client) shutdown() {
-	if c.ipv4conn != nil {
-		c.ipv4conn.Close()
-	}
-	if c.ipv6conn != nil {
-		c.ipv6conn.Close()
-	}
-}
-
-// Data receiving routine reads from connection, unpacks packets into dns.Msg
-// structures and sends them to a given msgCh channel
-func (c *client) recv(ctx context.Context, l interface{}, msgCh chan *dns.Msg) {
-	var readFrom func([]byte) (n int, src net.Addr, err error)
-
-	switch pConn := l.(type) {
-	case *ipv6.PacketConn:
-		readFrom = func(b []byte) (n int, src net.Addr, err error) {
-			n, _, src, err = pConn.ReadFrom(b)
-			return
-		}
-	case *ipv4.PacketConn:
-		readFrom = func(b []byte) (n int, src net.Addr, err error) {
-			n, _, src, err = pConn.ReadFrom(b)
-			return
-		}
-
-	default:
-		return
-	}
-
-	buf := make([]byte, 65536)
-	var fatalErr error
-	for {
-		// Handles the following cases:
-		// - ReadFrom aborts with error due to closed UDP connection -> causes ctx cancel
-		// - ReadFrom aborts otherwise.
-		// TODO: the context check can be removed. Verify!
-		if ctx.Err() != nil || fatalErr != nil {
-			return
-		}
-
-		n, _, err := readFrom(buf)
-		if err != nil {
-			fatalErr = err
-			continue
-		}
-		msg := new(dns.Msg)
-		if err := msg.Unpack(buf[:n]); err != nil {
-			// log.Printf("[WARN] mdns: Failed to unpack packet: %v", err)
-			continue
-		}
-		select {
-		case msgCh <- msg:
-			// Submit decoded DNS message and continue.
-		case <-ctx.Done():
-			// Abort.
-			return
-		}
-	}
+	c.conn.Close()
 }
 
 // periodicQuery sens multiple probes until a valid response is received by
@@ -449,48 +362,5 @@ func (c *client) query(params *lookupParams) error {
 		m.SetQuestion(serviceName, dns.TypePTR)
 	}
 	m.RecursionDesired = false
-	return c.sendQuery(m)
-}
-
-// Pack the dns.Msg and write to available connections (multicast)
-func (c *client) sendQuery(msg *dns.Msg) error {
-	buf, err := msg.Pack()
-	if err != nil {
-		return err
-	}
-	if c.ipv4conn != nil {
-		// See https://pkg.go.dev/golang.org/x/net/ipv4#pkg-note-BUG
-		// As of Golang 1.18.4
-		// On Windows, the ControlMessage for ReadFrom and WriteTo methods of PacketConn is not implemented.
-		var wcm ipv4.ControlMessage
-		for ifi := range c.ifaces {
-			switch runtime.GOOS {
-			case "darwin", "ios", "linux":
-				wcm.IfIndex = c.ifaces[ifi].Index
-			default:
-				if err := c.ipv4conn.SetMulticastInterface(&c.ifaces[ifi]); err != nil {
-					log.Printf("[WARN] mdns: Failed to set multicast interface: %v", err)
-				}
-			}
-			c.ipv4conn.WriteTo(buf, &wcm, ipv4Addr)
-		}
-	}
-	if c.ipv6conn != nil {
-		// See https://pkg.go.dev/golang.org/x/net/ipv6#pkg-note-BUG
-		// As of Golang 1.18.4
-		// On Windows, the ControlMessage for ReadFrom and WriteTo methods of PacketConn is not implemented.
-		var wcm ipv6.ControlMessage
-		for ifi := range c.ifaces {
-			switch runtime.GOOS {
-			case "darwin", "ios", "linux":
-				wcm.IfIndex = c.ifaces[ifi].Index
-			default:
-				if err := c.ipv6conn.SetMulticastInterface(&c.ifaces[ifi]); err != nil {
-					log.Printf("[WARN] mdns: Failed to set multicast interface: %v", err)
-				}
-			}
-			c.ipv6conn.WriteTo(buf, &wcm, ipv6Addr)
-		}
-	}
-	return nil
+	return c.conn.WriteMulticastAll(m)
 }
