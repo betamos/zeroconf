@@ -2,10 +2,10 @@ package zeroconf
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -28,14 +28,14 @@ var initialQueryInterval = 4 * time.Second
 
 // Client structure encapsulates both IPv4/IPv6 UDP connections.
 type client struct {
-	conn *dualConn
+	conn  *dualConn
+	cache map[string]*ServiceEntry
 
 	service *ServiceRecord
 	entries chan<- *ServiceEntry // Entries Channel
 
 	isBrowsing      bool
-	stopProbing     chan struct{}
-	once            sync.Once
+	cacheTimer      *time.Timer
 	unannouncements bool
 }
 
@@ -51,9 +51,11 @@ func Browse(ctx context.Context, service string, entries chan<- *ServiceEntry, c
 		return err
 	}
 	cl := &client{
+		conn:            conn,
+		cache:           make(map[string]*ServiceEntry),
 		entries:         entries,
 		service:         newServiceRecord("", service, conf.domain()),
-		conn:            conn,
+		cacheTimer:      time.NewTimer(aLongTime),
 		unannouncements: true,
 		isBrowsing:      true,
 	}
@@ -72,191 +74,18 @@ func Lookup(ctx context.Context, instance, service string, entries chan<- *Servi
 		return err
 	}
 	cl := &client{
+		conn:            conn,
+		cache:           make(map[string]*ServiceEntry),
 		entries:         entries,
 		service:         newServiceRecord(instance, service, conf.domain()),
-		conn:            conn,
+		cacheTimer:      time.NewTimer(aLongTime),
 		unannouncements: true,
 		isBrowsing:      false,
-		stopProbing:     make(chan struct{}),
 	}
 	return cl.run(ctx)
 }
 
 func (c *client) run(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		c.mainloop(ctx)
-	}()
-
-	// If previous probe was ok, it should be fine now. In case of an error later on,
-	// the entries' queue is closed.
-	err := c.periodicQuery(ctx)
-	cancel()
-	<-done
-	return err
-}
-
-func (c *client) disableProbing() {
-	c.once.Do(func() { close(c.stopProbing) })
-}
-
-var cleanupFreq = 10 * time.Second
-
-// Start listeners and waits for the shutdown signal from exit channel
-func (c *client) mainloop(ctx context.Context) {
-	// start listening for responses
-	msgCh := make(chan MsgMeta, 32)
-
-	go c.conn.RunReader(msgCh)
-
-	// Iterate through channels from listeners goroutines
-	sentEntries := make(map[string]*ServiceEntry)
-
-	ticker := time.NewTicker(cleanupFreq)
-
-	s := c.service // shorthand
-	defer ticker.Stop()
-	for {
-		var entries map[string]*ServiceEntry
-		var now time.Time
-		select {
-		case <-ctx.Done():
-			// Context expired. Notify subscriber that we are done here.
-			close(c.entries)
-			c.shutdown()
-			return
-		case t := <-ticker.C:
-			for k, e := range sentEntries {
-				if t.After(e.Expiry) {
-					if c.unannouncements {
-						c.entries <- e
-					}
-					delete(sentEntries, k)
-				}
-			}
-			continue
-		case msg := <-msgCh:
-			now = time.Now()
-			entries = make(map[string]*ServiceEntry)
-			sections := append(msg.Answer, msg.Ns...)
-			sections = append(sections, msg.Extra...)
-
-			for _, answer := range sections {
-				switch rr := answer.(type) {
-				case *dns.PTR:
-					if s.ServiceName() != rr.Hdr.Name {
-						continue
-					}
-					if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Ptr {
-						continue
-					}
-					if _, ok := entries[rr.Ptr]; !ok {
-						entries[rr.Ptr] = newServiceEntry(
-							trimDot(strings.Replace(rr.Ptr, rr.Hdr.Name, "", -1)),
-							s.Service,
-							s.Domain)
-					}
-					entries[rr.Ptr].Expiry = now.Add(time.Duration(rr.Hdr.Ttl) * time.Second)
-				case *dns.SRV:
-					if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Hdr.Name {
-						continue
-					} else if !strings.HasSuffix(rr.Hdr.Name, s.ServiceName()) {
-						continue
-					}
-					if _, ok := entries[rr.Hdr.Name]; !ok {
-						entries[rr.Hdr.Name] = newServiceEntry(
-							trimDot(strings.Replace(rr.Hdr.Name, s.ServiceName(), "", 1)),
-							s.Service,
-							s.Domain)
-					}
-					entries[rr.Hdr.Name].HostName = rr.Target
-					entries[rr.Hdr.Name].Port = int(rr.Port)
-					entries[rr.Hdr.Name].Expiry = now.Add(time.Duration(rr.Hdr.Ttl) * time.Second)
-				case *dns.TXT:
-					if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Hdr.Name {
-						continue
-					} else if !strings.HasSuffix(rr.Hdr.Name, s.ServiceName()) {
-						continue
-					}
-					if _, ok := entries[rr.Hdr.Name]; !ok {
-						entries[rr.Hdr.Name] = newServiceEntry(
-							trimDot(strings.Replace(rr.Hdr.Name, s.ServiceName(), "", 1)),
-							s.Service,
-							s.Domain)
-					}
-					entries[rr.Hdr.Name].Text = rr.Txt
-					entries[rr.Hdr.Name].Expiry = now.Add(time.Duration(rr.Hdr.Ttl) * time.Second)
-				}
-			}
-			// Associate IPs in a second round as other fields should be filled by now.
-			for _, answer := range sections {
-				switch rr := answer.(type) {
-				case *dns.A:
-					for k, e := range entries {
-						if e.HostName == rr.Hdr.Name {
-							entries[k].AddrIPv4 = append(entries[k].AddrIPv4, rr.A)
-						}
-					}
-				case *dns.AAAA:
-					for k, e := range entries {
-						if e.HostName == rr.Hdr.Name {
-							entries[k].AddrIPv6 = append(entries[k].AddrIPv6, rr.AAAA)
-						}
-					}
-				}
-			}
-		}
-
-		for k, e := range entries {
-			if !e.Expiry.After(now) {
-				// Implies TTL=0, meaning a "Goodbye Packet".
-				if _, ok := sentEntries[k]; ok && c.unannouncements {
-					c.entries <- e
-				}
-				delete(sentEntries, k)
-				continue
-			}
-			if _, ok := sentEntries[k]; ok {
-				if c.unannouncements {
-					sentEntries[k] = e
-				}
-				// Already sent, suppress duplicates
-				continue
-			}
-
-			// If this is an DNS-SD query do not throw PTR away.
-			// It is expected to have only PTR for enumeration
-			if s.ServiceTypeName() != s.ServiceName() {
-				// Require at least one resolved IP address for ServiceEntry
-				// TODO: wait some more time as chances are high both will arrive.
-				if len(e.AddrIPv4) == 0 && len(e.AddrIPv6) == 0 {
-					continue
-				}
-			}
-			// Submit entry to subscriber and cache it.
-			// This is also a point to possibly stop probing actively for a
-			// service entry.
-			c.entries <- e
-			sentEntries[k] = e
-			if !c.isBrowsing {
-				c.disableProbing()
-			}
-		}
-	}
-}
-
-// Shutdown client will close currently open connections and channel implicitly.
-func (c *client) shutdown() {
-	c.conn.Close()
-}
-
-// periodicQuery sens multiple probes until a valid response is received by
-// the main processing loop or some timeout/cancel fires.
-// TODO: move error reporting to shutdown function as periodicQuery is called from
-// go routine context.
-func (c *client) periodicQuery(ctx context.Context) error {
 	if c.isBrowsing {
 		// RFC6762 Section 8.3: [...] a Multicast DNS querier SHOULD also delay the first query of
 		// the series by a randomly chosen amount in the range 20-120 ms.
@@ -264,42 +93,187 @@ func (c *client) periodicQuery(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := c.query(); err != nil {
-		return err
+
+	err := c.mainloop(ctx)
+	err = errors.Join(err, c.shutdown())
+	return err
+}
+
+var cleanupFreq = 10 * time.Second
+
+func (c *client) clearCache(now time.Time) {
+	next := now.Add(aLongTime)
+	for k, e := range c.cache {
+		if now.After(e.Expiry) {
+			if c.unannouncements {
+				c.entries <- e
+			}
+			delete(c.cache, k)
+		} else if e.Expiry.Before(next) {
+			next = e.Expiry
+		}
 	}
+	if c.cacheTimer.Stop() {
+		c.cacheTimer.Reset(next.Sub(now))
+	}
+}
+
+// Start listeners and waits for the shutdown signal from exit channel
+func (c *client) mainloop(ctx context.Context) error {
+	// start listening for responses
+	msgCh := make(chan MsgMeta, 32)
+	go c.conn.RunReader(msgCh)
 
 	const maxInterval = 60 * time.Second
 	interval := initialQueryInterval
-	timer := time.NewTimer(interval)
-	defer timer.Stop()
+	queryTimer := time.NewTimer(0)
+	defer queryTimer.Stop()
+
+	defer c.cacheTimer.Stop() // TODO: Clear better
 	for {
 		select {
-		case <-timer.C:
-			// Wait for next iteration.
-		case <-c.stopProbing:
-			// Chan is closed (or happened in the past).
-			// Done here. Received a matching mDNS entry.
-			return nil
 		case <-ctx.Done():
-			if c.isBrowsing {
+			return ctx.Err()
+		case <-queryTimer.C:
+			queryTimer.Reset(interval)
+			_ = c.query() // TODO: Log?
+
+			// Exponential increase of the interval with jitter:
+			// the new interval will be between 1.5x and 2.5x the old interval, capped at maxInterval.
+			if interval != maxInterval {
+				interval += time.Duration(rand.Int63n(interval.Nanoseconds())) + interval/2
+				if interval > maxInterval {
+					interval = maxInterval
+				}
+			}
+			continue
+		case now := <-c.cacheTimer.C:
+			c.clearCache(now)
+		case msg, ok := <-msgCh:
+			if !ok {
 				return nil
 			}
-			return ctx.Err()
+			now := time.Now()
+			c.processMsg(msg, now)
+			c.clearCache(now)
 		}
+	}
+}
 
-		if err := c.query(); err != nil {
-			return err
+func (c *client) processMsg(msg MsgMeta, now time.Time) {
+	entries := make(map[string]*ServiceEntry)
+	sections := append(msg.Answer, msg.Ns...)
+	sections = append(sections, msg.Extra...)
+
+	s := c.service // shorthand
+
+	for _, answer := range sections {
+		switch rr := answer.(type) {
+		case *dns.PTR:
+			if s.ServiceName() != rr.Hdr.Name {
+				continue
+			}
+			if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Ptr {
+				continue
+			}
+			if _, ok := entries[rr.Ptr]; !ok {
+				entries[rr.Ptr] = newServiceEntry(
+					trimDot(strings.Replace(rr.Ptr, rr.Hdr.Name, "", -1)),
+					s.Service,
+					s.Domain)
+			}
+			entries[rr.Ptr].Expiry = now.Add(time.Duration(rr.Hdr.Ttl) * time.Second)
+		case *dns.SRV:
+			if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Hdr.Name {
+				continue
+			} else if !strings.HasSuffix(rr.Hdr.Name, s.ServiceName()) {
+				continue
+			}
+			if _, ok := entries[rr.Hdr.Name]; !ok {
+				entries[rr.Hdr.Name] = newServiceEntry(
+					trimDot(strings.Replace(rr.Hdr.Name, s.ServiceName(), "", 1)),
+					s.Service,
+					s.Domain)
+			}
+			entries[rr.Hdr.Name].HostName = rr.Target
+			entries[rr.Hdr.Name].Port = int(rr.Port)
+			entries[rr.Hdr.Name].Expiry = now.Add(time.Duration(rr.Hdr.Ttl) * time.Second)
+		case *dns.TXT:
+			if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Hdr.Name {
+				continue
+			} else if !strings.HasSuffix(rr.Hdr.Name, s.ServiceName()) {
+				continue
+			}
+			if _, ok := entries[rr.Hdr.Name]; !ok {
+				entries[rr.Hdr.Name] = newServiceEntry(
+					trimDot(strings.Replace(rr.Hdr.Name, s.ServiceName(), "", 1)),
+					s.Service,
+					s.Domain)
+			}
+			entries[rr.Hdr.Name].Text = rr.Txt
+			entries[rr.Hdr.Name].Expiry = now.Add(time.Duration(rr.Hdr.Ttl) * time.Second)
 		}
-		// Exponential increase of the interval with jitter:
-		// the new interval will be between 1.5x and 2.5x the old interval, capped at maxInterval.
-		if interval != maxInterval {
-			interval += time.Duration(rand.Int63n(interval.Nanoseconds())) + interval/2
-			if interval > maxInterval {
-				interval = maxInterval
+	}
+	// Associate IPs in a second round as other fields should be filled by now.
+	for _, answer := range sections {
+		switch rr := answer.(type) {
+		case *dns.A:
+			for k, e := range entries {
+				if e.HostName == rr.Hdr.Name {
+					entries[k].AddrIPv4 = append(entries[k].AddrIPv4, rr.A)
+				}
+			}
+		case *dns.AAAA:
+			for k, e := range entries {
+				if e.HostName == rr.Hdr.Name {
+					entries[k].AddrIPv6 = append(entries[k].AddrIPv6, rr.AAAA)
+				}
 			}
 		}
-		timer.Reset(interval)
 	}
+
+	for k, e := range entries {
+		if !e.Expiry.After(now) {
+			// Implies TTL=0, meaning a "Goodbye Packet".
+			if _, ok := c.cache[k]; ok && c.unannouncements {
+				c.entries <- e
+			}
+			delete(c.cache, k)
+			continue
+		}
+		if _, ok := c.cache[k]; ok {
+			if c.unannouncements {
+				c.cache[k] = e
+			}
+			// Already sent, suppress duplicates
+			continue
+		}
+
+		// If this is an DNS-SD query do not throw PTR away.
+		// It is expected to have only PTR for enumeration
+		if s.ServiceTypeName() != s.ServiceName() {
+			// Require at least one resolved IP address for ServiceEntry
+			// TODO: wait some more time as chances are high both will arrive.
+			if len(e.AddrIPv4) == 0 && len(e.AddrIPv6) == 0 {
+				continue
+			}
+		}
+		// Submit entry to subscriber and cache it.
+		// This is also a point to possibly stop probing actively for a
+		// service entry.
+		c.entries <- e
+		c.cache[k] = e
+	}
+}
+
+// Shutdown client will close currently open connections and channel implicitly.
+func (c *client) shutdown() error {
+	err := c.conn.Close()
+	close(c.entries) // TODO: Make thread safe?
+	c.cacheTimer.Stop()
+	for range c.cacheTimer.C {
+	}
+	return err
 }
 
 // Performs the actual query by service name (browse) or service instance name (lookup),
