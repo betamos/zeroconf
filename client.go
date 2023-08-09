@@ -22,6 +22,9 @@ const (
 	IPv4        IPType = 0x01
 	IPv6        IPType = 0x02
 	IPv4AndIPv6        = IPv4 | IPv6 // default option
+
+	// Max time window to coalesce responses that occur simultaneously
+	maxCoalesceDuration = time.Millisecond * 25
 )
 
 // Client structure encapsulates both IPv4/IPv6 UDP connections.
@@ -98,27 +101,32 @@ func (c *client) mainloop(ctx context.Context) error {
 
 	timer := time.NewTimer(0)
 	defer timer.Stop()
-	var now time.Time
+	var now, nextDeadline time.Time
+	newEntries := make(map[string]*ServiceEntry)
 	for {
-		var newEntries map[string]*ServiceEntry
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case now = <-timer.C:
 		case msg, ok := <-msgCh:
 			if !ok {
 				return nil
 			}
-			newEntries = c.processMsg(msg)
-			if len(newEntries) == 0 {
-				continue // as if nothing happened
+			if !c.processMsg(newEntries, msg) {
+				continue // No changes, ignore
 			}
-
-			// Prepare to operate on the cache below
 			now = time.Now()
+			newDeadline := now.Add(maxCoalesceDuration)
+			if nextDeadline.Before(newDeadline) {
+				continue // Next deadline is already sooner, no need to update it
+			}
 			if !timer.Stop() {
 				<-timer.C
 			}
+			nextDeadline = newDeadline
+			timer.Reset(maxCoalesceDuration)
+			continue // Wait for more entries
+		case now = <-timer.C:
+			// Fall through to handle everything else
 		}
 
 		c.cache.Advance(now)
@@ -129,13 +137,13 @@ func (c *client) mainloop(ctx context.Context) error {
 			// It is expected to have only PTR for enumeration
 			if c.service.ServiceTypeName() != c.service.ServiceName() {
 				// Require at least one resolved IP address for ServiceEntry
-				// TODO: wait some more time as chances are high both will arrive.
 				if len(e.AddrIPv4) == 0 && len(e.AddrIPv6) == 0 {
 					continue
 				}
 			}
 			c.cache.Put(k, e)
 		}
+		clear(newEntries)
 
 		if c.cache.ShouldQuery() {
 			_ = c.query() // TODO: Log?
@@ -143,12 +151,13 @@ func (c *client) mainloop(ctx context.Context) error {
 		}
 
 		// Invariant: the timer is currently stopped, so can be safely reset
-		timer.Reset(c.cache.NextTimeout())
+		nextDeadline = c.cache.NextDeadline()
+		timer.Reset(nextDeadline.Sub(now))
 	}
 }
 
-func (c *client) processMsg(msg MsgMeta) map[string]*ServiceEntry {
-	entries := make(map[string]*ServiceEntry)
+// Appends entries from the response and reports conservatively if anything was changed
+func (c *client) processMsg(entries map[string]*ServiceEntry, msg MsgMeta) (changed bool) {
 	sections := append(msg.Answer, msg.Ns...)
 	sections = append(sections, msg.Extra...)
 
@@ -170,6 +179,7 @@ func (c *client) processMsg(msg MsgMeta) map[string]*ServiceEntry {
 					s.Domain)
 			}
 			entries[rr.Ptr].TTL = rr.Hdr.Ttl
+			changed = true
 		case *dns.SRV:
 			if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Hdr.Name {
 				continue
@@ -185,6 +195,7 @@ func (c *client) processMsg(msg MsgMeta) map[string]*ServiceEntry {
 			entries[rr.Hdr.Name].HostName = rr.Target
 			entries[rr.Hdr.Name].Port = int(rr.Port)
 			entries[rr.Hdr.Name].TTL = rr.Hdr.Ttl
+			changed = true
 		case *dns.TXT:
 			if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Hdr.Name {
 				continue
@@ -199,6 +210,7 @@ func (c *client) processMsg(msg MsgMeta) map[string]*ServiceEntry {
 			}
 			entries[rr.Hdr.Name].Text = rr.Txt
 			entries[rr.Hdr.Name].TTL = rr.Hdr.Ttl
+			changed = true
 		}
 	}
 	// Associate IPs in a second round as other fields should be filled by now.
@@ -208,17 +220,19 @@ func (c *client) processMsg(msg MsgMeta) map[string]*ServiceEntry {
 			for k, e := range entries {
 				if e.HostName == rr.Hdr.Name {
 					entries[k].AddrIPv4 = append(entries[k].AddrIPv4, rr.A)
+					changed = true
 				}
 			}
 		case *dns.AAAA:
 			for k, e := range entries {
 				if e.HostName == rr.Hdr.Name {
 					entries[k].AddrIPv6 = append(entries[k].AddrIPv6, rr.AAAA)
+					changed = true
 				}
 			}
 		}
 	}
-	return entries
+	return
 }
 
 // Performs the actual query by service name (browse) or service instance name (lookup),

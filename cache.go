@@ -128,7 +128,7 @@ func (c *cache) Queried() {
 }
 
 // Returns the time for the next event, either a query or cache expiry
-func (c *cache) NextTimeout() time.Duration {
+func (c *cache) NextDeadline() time.Time {
 	// TODO: Add jitter to avoid timing collisions with other queriers.
 	soonest := c.nextPeriodic
 	if c.nextExpiry.Before(soonest) {
@@ -137,7 +137,7 @@ func (c *cache) NextTimeout() time.Duration {
 	if c.nextLivecheck.Before(soonest) {
 		soonest = c.nextLivecheck
 	}
-	return soonest.Sub(c.now)
+	return soonest
 }
 
 // Close the event channel
