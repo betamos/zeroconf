@@ -1,6 +1,7 @@
 package zeroconf
 
 import (
+	"math/rand"
 	"time"
 )
 
@@ -45,6 +46,9 @@ type cache struct {
 	events  chan<- Event
 	maxTTL  uint32
 
+	// A number in range [0,1) used for query scheduling jitter. Regenerated at query time.
+	entropy float64
+
 	// Advanced by user
 	lastQuery, now time.Time
 
@@ -52,7 +56,7 @@ type cache struct {
 	nextExpiry time.Time
 
 	// The earliest live check scheduled, based on lastQuery and cache entries.
-	// A live check query happens at 80-95% of an entry expiry. To prevent excessive
+	// A live check query happens at 80-97% of an entry expiry. To prevent excessive
 	// queries, only entries that responded to the last query are considered for a live check.
 	nextLivecheck time.Time
 
@@ -107,9 +111,12 @@ func (c *cache) ShouldQuery() bool {
 
 // Should be called once a query has been made.
 func (c *cache) Queried() {
+	c.entropy = rand.Float64()
+
 	// RFC6762 Section 5.2: [...] the interval between the first two queries MUST be at least one
 	// second, the intervals between successive queries MUST increase by at least a factor of two.
-	interval := c.now.Sub(c.lastQuery) * 2
+	sinceLastQuery := c.now.Sub(c.lastQuery)
+	interval := time.Duration(float64(sinceLastQuery) * float64(1.5+c.entropy)) // 1.5 - 2.5x
 	if interval < minInterval {
 		interval = minInterval
 	} else if interval > maxInterval {
@@ -169,7 +176,8 @@ func (c *cache) refresh() {
 		}
 
 		// Update next livecheck
-		liveCheck := entry.seenAt.Add(time.Second * time.Duration(ttl) * 9 / 10)
+		floatDur := float64(ttl) * float64(time.Second) * (0.80 + c.entropy*0.17) // 80-97% of ttl
+		liveCheck := entry.seenAt.Add(time.Duration(floatDur))
 		if liveCheck.Before(c.nextLivecheck) {
 			c.nextLivecheck = liveCheck
 		}
