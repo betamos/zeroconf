@@ -24,25 +24,20 @@ const (
 	IPv4AndIPv6        = IPv4 | IPv6 // default option
 )
 
-var initialQueryInterval = 4 * time.Second
-
 // Client structure encapsulates both IPv4/IPv6 UDP connections.
 type client struct {
-	conn  *dualConn
-	cache map[string]*ServiceEntry
+	conn *dualConn
 
 	service *ServiceRecord
-	entries chan<- *ServiceEntry // Entries Channel
+	cache   *cache
 
-	isBrowsing      bool
-	cacheTimer      *time.Timer
-	unannouncements bool
+	isBrowsing bool
 }
 
 // Browse for all services of a given type in a given domain.
 // Received entries are sent on the entries channel.
 // It blocks until the context is canceled (or an error occurs).
-func Browse(ctx context.Context, service string, entries chan<- *ServiceEntry, conf *Config) error {
+func Browse(ctx context.Context, service string, entries chan<- Event, conf *Config) error {
 	if conf == nil {
 		conf = new(Config)
 	}
@@ -51,13 +46,10 @@ func Browse(ctx context.Context, service string, entries chan<- *ServiceEntry, c
 		return err
 	}
 	cl := &client{
-		conn:            conn,
-		cache:           make(map[string]*ServiceEntry),
-		entries:         entries,
-		service:         newServiceRecord("", service, conf.domain()),
-		cacheTimer:      time.NewTimer(aLongTime),
-		unannouncements: true,
-		isBrowsing:      true,
+		conn:       conn,
+		cache:      newCache(entries, 0),
+		service:    newServiceRecord("", service, conf.domain()),
+		isBrowsing: true,
 	}
 	return cl.run(ctx)
 }
@@ -65,7 +57,7 @@ func Browse(ctx context.Context, service string, entries chan<- *ServiceEntry, c
 // Lookup a specific service by its name and type in a given domain.
 // Received entries are sent on the entries channel.
 // It blocks until the context is canceled (or an error occurs).
-func Lookup(ctx context.Context, instance, service string, entries chan<- *ServiceEntry, conf *Config) error {
+func Lookup(ctx context.Context, instance, service string, entries chan<- Event, conf *Config) error {
 	if conf == nil {
 		conf = new(Config)
 	}
@@ -74,13 +66,10 @@ func Lookup(ctx context.Context, instance, service string, entries chan<- *Servi
 		return err
 	}
 	cl := &client{
-		conn:            conn,
-		cache:           make(map[string]*ServiceEntry),
-		entries:         entries,
-		service:         newServiceRecord(instance, service, conf.domain()),
-		cacheTimer:      time.NewTimer(aLongTime),
-		unannouncements: true,
-		isBrowsing:      false,
+		conn:       conn,
+		cache:      newCache(entries, 120),
+		service:    newServiceRecord("", service, conf.domain()),
+		isBrowsing: false,
 	}
 	return cl.run(ctx)
 }
@@ -95,27 +84,10 @@ func (c *client) run(ctx context.Context) error {
 	}
 
 	err := c.mainloop(ctx)
-	err = errors.Join(err, c.shutdown())
+
+	c.cache.Close()
+	err = errors.Join(err, c.conn.Close())
 	return err
-}
-
-var cleanupFreq = 10 * time.Second
-
-func (c *client) clearCache(now time.Time) {
-	next := now.Add(aLongTime)
-	for k, e := range c.cache {
-		if now.After(e.Expiry) {
-			if c.unannouncements {
-				c.entries <- e
-			}
-			delete(c.cache, k)
-		} else if e.Expiry.Before(next) {
-			next = e.Expiry
-		}
-	}
-	if c.cacheTimer.Stop() {
-		c.cacheTimer.Reset(next.Sub(now))
-	}
 }
 
 // Start listeners and waits for the shutdown signal from exit channel
@@ -124,43 +96,58 @@ func (c *client) mainloop(ctx context.Context) error {
 	msgCh := make(chan MsgMeta, 32)
 	go c.conn.RunReader(msgCh)
 
-	const maxInterval = 60 * time.Second
-	interval := initialQueryInterval
-	queryTimer := time.NewTimer(0)
-	defer queryTimer.Stop()
-
-	defer c.cacheTimer.Stop() // TODO: Clear better
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+	var now time.Time
 	for {
+		var newEntries map[string]*ServiceEntry
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-queryTimer.C:
-			queryTimer.Reset(interval)
-			_ = c.query() // TODO: Log?
-
-			// Exponential increase of the interval with jitter:
-			// the new interval will be between 1.5x and 2.5x the old interval, capped at maxInterval.
-			if interval != maxInterval {
-				interval += time.Duration(rand.Int63n(interval.Nanoseconds())) + interval/2
-				if interval > maxInterval {
-					interval = maxInterval
-				}
-			}
-			continue
-		case now := <-c.cacheTimer.C:
-			c.clearCache(now)
+		case now = <-timer.C:
 		case msg, ok := <-msgCh:
 			if !ok {
 				return nil
 			}
-			now := time.Now()
-			c.processMsg(msg, now)
-			c.clearCache(now)
+			newEntries = c.processMsg(msg)
+			if len(newEntries) == 0 {
+				continue // as if nothing happened
+			}
+
+			// Prepare to operate on the cache below
+			now = time.Now()
+			if !timer.Stop() {
+				<-timer.C
+			}
 		}
+
+		c.cache.Advance(now)
+
+		// Add new entries to the cache, if any
+		for k, e := range newEntries {
+			// If this is an DNS-SD query do not throw PTR away.
+			// It is expected to have only PTR for enumeration
+			if c.service.ServiceTypeName() != c.service.ServiceName() {
+				// Require at least one resolved IP address for ServiceEntry
+				// TODO: wait some more time as chances are high both will arrive.
+				if len(e.AddrIPv4) == 0 && len(e.AddrIPv6) == 0 {
+					continue
+				}
+			}
+			c.cache.Put(k, e)
+		}
+
+		if c.cache.ShouldQuery() {
+			_ = c.query() // TODO: Log?
+			c.cache.Queried()
+		}
+
+		// Invariant: the timer is currently stopped, so can be safely reset
+		timer.Reset(c.cache.NextTimeout())
 	}
 }
 
-func (c *client) processMsg(msg MsgMeta, now time.Time) {
+func (c *client) processMsg(msg MsgMeta) map[string]*ServiceEntry {
 	entries := make(map[string]*ServiceEntry)
 	sections := append(msg.Answer, msg.Ns...)
 	sections = append(sections, msg.Extra...)
@@ -182,7 +169,7 @@ func (c *client) processMsg(msg MsgMeta, now time.Time) {
 					s.Service,
 					s.Domain)
 			}
-			entries[rr.Ptr].Expiry = now.Add(time.Duration(rr.Hdr.Ttl) * time.Second)
+			entries[rr.Ptr].TTL = rr.Hdr.Ttl
 		case *dns.SRV:
 			if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Hdr.Name {
 				continue
@@ -197,7 +184,7 @@ func (c *client) processMsg(msg MsgMeta, now time.Time) {
 			}
 			entries[rr.Hdr.Name].HostName = rr.Target
 			entries[rr.Hdr.Name].Port = int(rr.Port)
-			entries[rr.Hdr.Name].Expiry = now.Add(time.Duration(rr.Hdr.Ttl) * time.Second)
+			entries[rr.Hdr.Name].TTL = rr.Hdr.Ttl
 		case *dns.TXT:
 			if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Hdr.Name {
 				continue
@@ -211,7 +198,7 @@ func (c *client) processMsg(msg MsgMeta, now time.Time) {
 					s.Domain)
 			}
 			entries[rr.Hdr.Name].Text = rr.Txt
-			entries[rr.Hdr.Name].Expiry = now.Add(time.Duration(rr.Hdr.Ttl) * time.Second)
+			entries[rr.Hdr.Name].TTL = rr.Hdr.Ttl
 		}
 	}
 	// Associate IPs in a second round as other fields should be filled by now.
@@ -231,49 +218,7 @@ func (c *client) processMsg(msg MsgMeta, now time.Time) {
 			}
 		}
 	}
-
-	for k, e := range entries {
-		if !e.Expiry.After(now) {
-			// Implies TTL=0, meaning a "Goodbye Packet".
-			if _, ok := c.cache[k]; ok && c.unannouncements {
-				c.entries <- e
-			}
-			delete(c.cache, k)
-			continue
-		}
-		if _, ok := c.cache[k]; ok {
-			if c.unannouncements {
-				c.cache[k] = e
-			}
-			// Already sent, suppress duplicates
-			continue
-		}
-
-		// If this is an DNS-SD query do not throw PTR away.
-		// It is expected to have only PTR for enumeration
-		if s.ServiceTypeName() != s.ServiceName() {
-			// Require at least one resolved IP address for ServiceEntry
-			// TODO: wait some more time as chances are high both will arrive.
-			if len(e.AddrIPv4) == 0 && len(e.AddrIPv6) == 0 {
-				continue
-			}
-		}
-		// Submit entry to subscriber and cache it.
-		// This is also a point to possibly stop probing actively for a
-		// service entry.
-		c.entries <- e
-		c.cache[k] = e
-	}
-}
-
-// Shutdown client will close currently open connections and channel implicitly.
-func (c *client) shutdown() error {
-	err := c.conn.Close()
-	close(c.entries) // TODO: Make thread safe?
-	c.cacheTimer.Stop()
-	for range c.cacheTimer.C {
-	}
-	return err
+	return entries
 }
 
 // Performs the actual query by service name (browse) or service instance name (lookup),

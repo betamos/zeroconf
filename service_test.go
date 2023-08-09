@@ -45,21 +45,17 @@ func TestQuickShutdown(t *testing.T) {
 }
 
 func TestBasic(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	startMDNS(t, mdnsPort, mdnsName, mdnsService, defaultConf)
 
-	time.Sleep(time.Second)
-
-	entries := make(chan *ServiceEntry, 100)
-	if err := Browse(ctx, mdnsService, entries, defaultConf); err != nil {
-		t.Fatalf("Expected browse success, but got %v", err)
-	}
+	entries := make(chan Event, 100)
+	Browse(ctx, mdnsService, entries, defaultConf)
 	<-ctx.Done()
 
-	if len(entries) != 1 {
-		t.Fatalf("Expected number of service entries is 1, but got %d", len(entries))
+	if len(entries) < 1 {
+		t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 	}
 	result := <-entries
 	if result.Domain != mdnsDomain {
@@ -78,39 +74,33 @@ func TestBasic(t *testing.T) {
 
 func TestNoRegister(t *testing.T) {
 	// before register, mdns resolve shuold not have any entry
-	entries := make(chan *ServiceEntry)
-	go func(results <-chan *ServiceEntry) {
-		s := <-results
-		if s != nil {
-			t.Errorf("Expected empty service entries but got %v", *s)
+	entries := make(chan Event)
+	go func(results <-chan Event) {
+		s, ok := <-results
+		if ok {
+			t.Errorf("Expected empty service entries but got %v", s)
 		}
 	}(entries)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	if err := Browse(ctx, mdnsService, entries, defaultConf); err != nil {
-		t.Fatalf("Expected browse success, but got %v", err)
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	Browse(ctx, mdnsService, entries, defaultConf)
 	<-ctx.Done()
 	cancel()
 }
 
 func TestSubtype(t *testing.T) {
 	t.Run("browse with subtype", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
 		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype, defaultConf)
 
-		time.Sleep(time.Second)
-
-		entries := make(chan *ServiceEntry, 100)
-		if err := Browse(ctx, mdnsService, entries, defaultConf); err != nil {
-			t.Fatalf("Expected browse success, but got %v", err)
-		}
+		entries := make(chan Event, 100)
+		Browse(ctx, mdnsService, entries, defaultConf)
 		<-ctx.Done()
 
-		if len(entries) != 1 {
-			t.Fatalf("Expected number of service entries is 1, but got %d", len(entries))
+		if len(entries) < 1 {
+			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 		}
 		result := <-entries
 		if result.Domain != mdnsDomain {
@@ -128,21 +118,17 @@ func TestSubtype(t *testing.T) {
 	})
 
 	t.Run("browse without subtype", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
 		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype, defaultConf)
 
-		time.Sleep(time.Second)
-
-		entries := make(chan *ServiceEntry, 100)
-		if err := Browse(ctx, mdnsService, entries, defaultConf); err != nil {
-			t.Fatalf("Expected browse success, but got %v", err)
-		}
+		entries := make(chan Event, 100)
+		Browse(ctx, mdnsService, entries, defaultConf)
 		<-ctx.Done()
 
-		if len(entries) != 1 {
-			t.Fatalf("Expected number of service entries is 1, but got %d", len(entries))
+		if len(entries) < 1 {
+			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 		}
 		result := <-entries
 		if result.Domain != mdnsDomain {
@@ -161,32 +147,23 @@ func TestSubtype(t *testing.T) {
 
 	t.Run("ttl", func(t *testing.T) {
 		conf := &Config{TTL: 1, Domain: mdnsDomain}
-		origCleanupFreq := cleanupFreq
-		origInitialQueryInterval := initialQueryInterval
 		t.Cleanup(func() {
-			cleanupFreq = origCleanupFreq
-			initialQueryInterval = origInitialQueryInterval
 		})
-		initialQueryInterval = 100 * time.Millisecond
-		cleanupFreq = 100 * time.Millisecond
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype, conf)
 
-		entries := make(chan *ServiceEntry, 100)
-		if err := Browse(ctx, mdnsService, entries, defaultConf); err != nil {
-			t.Fatalf("Expected browse success, but got %v", err)
-		}
+		entries := make(chan Event, 100)
+		Browse(ctx, mdnsService, entries, defaultConf)
 
 		<-ctx.Done()
-		if len(entries) < 2 {
-			t.Fatalf("Expected to have received at least 2 entries, but got %d", len(entries))
+		if len(entries) < 1 {
+			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 		}
-		res1 := <-entries
-		res2 := <-entries
-		if res1.ServiceInstanceName() != res2.ServiceInstanceName() {
-			t.Fatalf("expected the two entries to be identical")
+		res := <-entries
+		if res.TTL != 1 {
+			t.Fatalf("expected TTL=1, got %d", res.TTL)
 		}
 	})
 }

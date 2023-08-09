@@ -70,12 +70,14 @@ func newServiceRecord(instance, service, domain string) *ServiceRecord {
 // used to answer multicast queries.
 type ServiceEntry struct {
 	ServiceRecord
-	HostName string    `json:"hostname"` // Host machine DNS name
-	Port     int       `json:"port"`     // Service Port
-	Text     []string  `json:"text"`     // Service info served as a TXT record
-	Expiry   time.Time `json:"expiry"`   // Expiry of the service entry, will be converted to a TTL value
-	AddrIPv4 []net.IP  `json:"-"`        // Host machine IPv4 address
-	AddrIPv6 []net.IP  `json:"-"`        // Host machine IPv6 address
+	HostName string   `json:"hostname"` // Host machine DNS name
+	Port     int      `json:"port"`     // Service Port
+	Text     []string `json:"text"`     // Service info served as a TXT record
+	AddrIPv4 []net.IP `json:"-"`        // Host machine IPv4 address
+	AddrIPv6 []net.IP `json:"-"`        // Host machine IPv6 address
+	TTL      uint32   `json:"ttl"`      // Service TTL
+
+	seenAt time.Time // Used by cache to calculate expiry
 }
 
 // newServiceEntry constructs a ServiceEntry.

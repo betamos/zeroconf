@@ -22,11 +22,11 @@ func main() {
 		Domain: *domain,
 	}
 
-	entries := make(chan *zeroconf.ServiceEntry)
-	go func(results <-chan *zeroconf.ServiceEntry) {
+	entries := make(chan zeroconf.Event)
+	go func(results <-chan zeroconf.Event) {
 		for entry := range results {
 			sym := "[-]"
-			if entry.Expiry.After(time.Now()) {
+			if entry.Op == zeroconf.OpAdded {
 				sym = "[+]"
 			}
 			log.Println(sym, entry.ServiceInstanceName(), entry.AddrIPv4, entry.AddrIPv6, entry.Port)
