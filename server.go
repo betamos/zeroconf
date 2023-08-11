@@ -377,9 +377,10 @@ func (s *Server) composeBrowsingAnswers(resp *dns.Msg) {
 		Port:     uint16(s.service.Port),
 		Target:   s.service.HostName,
 	}
-	resp.Extra = append(resp.Extra, srv)
 
-	if s.service.Text != nil {
+	// RFC6763 Section 6: Every DNS-SD service MUST have a TXT record in addition to its
+	// SRV record, with the same name, even if the service has no additional data to store and
+	// the TXT record contains no more than a single zero byte.
 		txt := &dns.TXT{
 			Hdr: dns.RR_Header{
 				Name:   s.service.ServiceInstanceName(),
@@ -389,8 +390,8 @@ func (s *Server) composeBrowsingAnswers(resp *dns.Msg) {
 			},
 			Txt: s.service.Text,
 		}
-		resp.Extra = append(resp.Extra, txt)
-	}
+
+	resp.Extra = append(resp.Extra, srv, txt)
 
 	resp.Extra = s.appendAddrs(resp.Extra, s.ttl, false)
 }
@@ -410,42 +411,7 @@ func (s *Server) composeLookupAnswers(resp *dns.Msg, ttl uint32, flushCache bool
 		},
 		Ptr: s.service.ServiceInstanceName(),
 	}
-	srv := &dns.SRV{
-		Hdr: dns.RR_Header{
-			Name:   s.service.ServiceInstanceName(),
-			Rrtype: dns.TypeSRV,
-			Class:  dns.ClassINET | qClassCacheFlush,
-			Ttl:    ttl,
-		},
-		Priority: 0,
-		Weight:   0,
-		Port:     uint16(s.service.Port),
-		Target:   s.service.HostName,
-	}
-	dnssd := &dns.PTR{
-		Hdr: dns.RR_Header{
-			Name:   s.service.ServiceTypeName(),
-			Rrtype: dns.TypePTR,
-			Class:  dns.ClassINET,
-			Ttl:    ttl,
-		},
-		Ptr: s.service.ServiceName(),
-	}
-	resp.Answer = append(resp.Answer, srv, ptr, dnssd)
-
-	if s.service.Text != nil {
-		txt := &dns.TXT{
-			Hdr: dns.RR_Header{
-				Name:   s.service.ServiceInstanceName(),
-				Rrtype: dns.TypeTXT,
-				Class:  dns.ClassINET | qClassCacheFlush,
-				Ttl:    ttl,
-			},
-			Txt: s.service.Text,
-		}
-		resp.Answer = append(resp.Answer, txt)
-	}
-
+	resp.Answer = append(resp.Answer, ptr)
 	for _, subtype := range s.service.Subtypes {
 		ptr := &dns.PTR{
 			Hdr: dns.RR_Header{
@@ -459,7 +425,43 @@ func (s *Server) composeLookupAnswers(resp *dns.Msg, ttl uint32, flushCache bool
 		resp.Answer = append(resp.Answer, ptr)
 	}
 
-	resp.Answer = s.appendAddrs(resp.Answer, ttl, flushCache)
+	srv := &dns.SRV{
+		Hdr: dns.RR_Header{
+			Name:   s.service.ServiceInstanceName(),
+			Rrtype: dns.TypeSRV,
+			Class:  dns.ClassINET | qClassCacheFlush,
+			Ttl:    ttl,
+		},
+		Priority: 0,
+		Weight:   0,
+		Port:     uint16(s.service.Port),
+		Target:   s.service.HostName,
+	}
+
+	// RFC 6763 sec 9 Service Type Enumeration.
+	// TODO: Only include if asked
+	dnssd := &dns.PTR{
+		Hdr: dns.RR_Header{
+			Name:   s.service.ServiceTypeName(),
+			Rrtype: dns.TypePTR,
+			Class:  dns.ClassINET,
+			Ttl:    ttl,
+		},
+		Ptr: s.service.ServiceName(),
+	}
+
+		txt := &dns.TXT{
+			Hdr: dns.RR_Header{
+				Name:   s.service.ServiceInstanceName(),
+				Rrtype: dns.TypeTXT,
+				Class:  dns.ClassINET | qClassCacheFlush,
+				Ttl:    ttl,
+			},
+			Txt: s.service.Text,
+		}
+	resp.Extra = append(resp.Extra, srv, txt, dnssd)
+
+	resp.Extra = s.appendAddrs(resp.Answer, ttl, flushCache)
 }
 
 func (s *Server) serviceTypeName(resp *dns.Msg, ttl uint32) {
