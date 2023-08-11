@@ -183,7 +183,16 @@ func RegisterProxy(instance, service string, port int, host string, ips []string
 }
 
 const (
-	qClassCacheFlush uint16 = 1 << 15
+
+	// RFC 6762 Section 10.2: [...] the host sets the most significant bit of the rrclass
+	// field of the resource record.  This bit, the cache-flush bit, tells neighboring hosts that
+	// this is not a shared record type.
+	qClassCacheFlush = 1 << 15
+
+	// RFC 6762 Section 18.12: In the Question Section of a Multicast DNS query, the top bit of the
+	// qclass field is used to indicate that unicast responses are preferred for this particular
+	// question.
+	qClassUnicastResponse = 1 << 15
 )
 
 // Server structure encapsulates both IPv4/IPv6 UDP connections
@@ -264,7 +273,7 @@ func (s *Server) handleQuery(query *dns.Msg, ifIndex int, from net.Addr) error {
 			continue
 		}
 
-		if isUnicastQuestion(q) {
+		if q.Qclass&qClassUnicastResponse != 0 {
 			// Send unicast
 			if e := s.conn.WriteUnicast(&resp, ifIndex, from); e != nil {
 				err = e
@@ -488,7 +497,7 @@ func (s *Server) announce(ctx context.Context) error {
 	timeout := time.Second
 	resp := new(dns.Msg)
 	resp.MsgHdr.Response = true
-	// TODO: make response authoritative if we are the publisher
+	resp.MsgHdr.Authoritative = true
 	resp.Compress = true
 	s.composeLookupAnswers(resp, s.ttl, true)
 	for i := 0; i < announceCount; i++ {
@@ -543,14 +552,4 @@ func (s *Server) appendAddrs(list []dns.RR, ttl uint32, flushCache bool) []dns.R
 		list = append(list, aaaa)
 	}
 	return list
-}
-
-func isUnicastQuestion(q dns.Question) bool {
-	// From RFC6762
-	// 18.12.  Repurposing of Top Bit of qclass in Question Section
-	//
-	//    In the Question Section of a Multicast DNS query, the top bit of the
-	//    qclass field is used to indicate that unicast responses are preferred
-	//    for this particular question.  (See Section 5.4.)
-	return q.Qclass&qClassCacheFlush != 0
 }
