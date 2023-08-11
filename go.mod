@@ -1,6 +1,6 @@
 module github.com/betamos/zeroconf/v2
 
-go 1.20
+go 1.21
 
 require (
 	github.com/miekg/dns v1.1.55
