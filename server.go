@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -158,12 +159,12 @@ func RegisterProxy(instance, service string, port int, host string, ips []string
 	}
 
 	for _, ip := range ips {
-		ipAddr := net.ParseIP(ip)
-		if ipAddr == nil {
+		ipAddr, err := netip.ParseAddr(ip)
+		if err != nil {
 			return nil, fmt.Errorf("failed to parse given IP: %v", ip)
-		} else if ipv4 := ipAddr.To4(); ipv4 != nil {
+		} else if ipAddr.Is4() {
 			entry.AddrIPv4 = append(entry.AddrIPv4, ipAddr)
-		} else if ipv6 := ipAddr.To16(); ipv6 != nil {
+		} else if ipAddr.Is6() {
 			entry.AddrIPv6 = append(entry.AddrIPv6, ipAddr)
 		} else {
 			return nil, fmt.Errorf("the IP is neither IPv4 nor IPv6: %#v", ipAddr)
@@ -381,15 +382,15 @@ func (s *Server) composeBrowsingAnswers(resp *dns.Msg) {
 	// RFC6763 Section 6: Every DNS-SD service MUST have a TXT record in addition to its
 	// SRV record, with the same name, even if the service has no additional data to store and
 	// the TXT record contains no more than a single zero byte.
-		txt := &dns.TXT{
-			Hdr: dns.RR_Header{
-				Name:   s.service.ServiceInstanceName(),
-				Rrtype: dns.TypeTXT,
-				Class:  dns.ClassINET,
-				Ttl:    s.ttl,
-			},
-			Txt: s.service.Text,
-		}
+	txt := &dns.TXT{
+		Hdr: dns.RR_Header{
+			Name:   s.service.ServiceInstanceName(),
+			Rrtype: dns.TypeTXT,
+			Class:  dns.ClassINET,
+			Ttl:    s.ttl,
+		},
+		Txt: s.service.Text,
+	}
 
 	resp.Extra = append(resp.Extra, srv, txt)
 
@@ -450,15 +451,15 @@ func (s *Server) composeLookupAnswers(resp *dns.Msg, ttl uint32, flushCache bool
 		Ptr: s.service.ServiceName(),
 	}
 
-		txt := &dns.TXT{
-			Hdr: dns.RR_Header{
-				Name:   s.service.ServiceInstanceName(),
-				Rrtype: dns.TypeTXT,
-				Class:  dns.ClassINET | qClassCacheFlush,
-				Ttl:    ttl,
-			},
-			Txt: s.service.Text,
-		}
+	txt := &dns.TXT{
+		Hdr: dns.RR_Header{
+			Name:   s.service.ServiceInstanceName(),
+			Rrtype: dns.TypeTXT,
+			Class:  dns.ClassINET | qClassCacheFlush,
+			Ttl:    ttl,
+		},
+		Txt: s.service.Text,
+	}
 	resp.Extra = append(resp.Extra, srv, txt, dnssd)
 
 	resp.Extra = s.appendAddrs(resp.Answer, ttl, flushCache)
@@ -537,7 +538,7 @@ func (s *Server) appendAddrs(list []dns.RR, ttl uint32, flushCache bool) []dns.R
 				Class:  dns.ClassINET | cacheFlushBit,
 				Ttl:    ttl,
 			},
-			A: ipv4,
+			A: ipv4.AsSlice(),
 		}
 		list = append(list, a)
 	}
@@ -549,7 +550,7 @@ func (s *Server) appendAddrs(list []dns.RR, ttl uint32, flushCache bool) []dns.R
 				Class:  dns.ClassINET | cacheFlushBit,
 				Ttl:    ttl,
 			},
-			AAAA: ipv6,
+			AAAA: ipv6.AsSlice(),
 		}
 		list = append(list, aaaa)
 	}

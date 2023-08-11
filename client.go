@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -217,16 +218,24 @@ func (c *client) processMsg(entries map[string]*ServiceEntry, msg MsgMeta) (chan
 	for _, answer := range sections {
 		switch rr := answer.(type) {
 		case *dns.A:
+			ip, ok := netip.AddrFromSlice(rr.A)
+			if !ok {
+				continue
+			}
 			for k, e := range entries {
 				if e.HostName == rr.Hdr.Name {
-					entries[k].AddrIPv4 = append(entries[k].AddrIPv4, rr.A)
+					entries[k].AddrIPv4 = append(entries[k].AddrIPv4, ip)
 					changed = true
 				}
 			}
 		case *dns.AAAA:
+			ip, ok := netip.AddrFromSlice(rr.AAAA)
+			if !ok {
+				continue
+			}
 			for k, e := range entries {
 				if e.HostName == rr.Hdr.Name {
-					entries[k].AddrIPv6 = append(entries[k].AddrIPv6, rr.AAAA)
+					entries[k].AddrIPv6 = append(entries[k].AddrIPv6, ip)
 					changed = true
 				}
 			}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -77,8 +78,8 @@ func (c *dualConn) conns() (conns []conn) {
 	return
 }
 
-func (c *dualConn) Addrs() (v4, v6 []net.IP) {
-	var v6local []net.IP
+func (c *dualConn) Addrs() (v4, v6 []netip.Addr) {
+	var v6local []netip.Addr
 	for _, iface := range c.ifaces {
 		addrs, _ := iface.Addrs()
 		for _, address := range addrs {
@@ -86,16 +87,17 @@ func (c *dualConn) Addrs() (v4, v6 []net.IP) {
 			if !ok || ipnet.IP.IsLoopback() {
 				continue
 			}
-			if ipnet.IP.To4() != nil {
-				if iface.is4 {
-					v4 = append(v4, ipnet.IP)
-				}
-			} else if iface.is6 {
-				switch ip := ipnet.IP.To16(); ip != nil {
-				case ip.IsGlobalUnicast():
-					v6 = append(v6, ipnet.IP)
-				case ip.IsLinkLocalUnicast():
-					v6local = append(v6local, ipnet.IP)
+			ip, ok := netip.AddrFromSlice(ipnet.IP)
+			if !ok {
+				continue
+			}
+			if ip.Is4() && iface.is4 {
+				v4 = append(v4, ip)
+			} else if ip.Is6() && iface.is6 {
+				if ip.IsGlobalUnicast() {
+					v6 = append(v6, ip)
+				} else if ip.IsLinkLocalUnicast() {
+					v6local = append(v6local, ip)
 				}
 			}
 		}
