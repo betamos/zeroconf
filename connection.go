@@ -114,6 +114,7 @@ type conn6 struct {
 var _ conn = &conn6{}
 
 func newConn6() (c *conn6, err error) {
+	// TODO: Use `REUSEPORT`, RFC 6762 section 15.1.
 	udpConn, err := net.ListenUDP("udp6", mdnsWildcardAddrIPv6)
 	if err != nil {
 		return nil, err
