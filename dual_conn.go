@@ -91,6 +91,7 @@ func (c *dualConn) Addrs() (v4, v6 []netip.Addr) {
 			if !ok {
 				continue
 			}
+			ip = ip.Unmap()
 			if ip.Is4() && iface.is4 {
 				v4 = append(v4, ip)
 			} else if ip.Is6() && iface.is6 {
