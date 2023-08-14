@@ -22,24 +22,25 @@ const (
 )
 
 type Config struct {
-	// IP protocol to use, default = IPv4AndIPv6
-	IPType IPType
-
 	// Interfaces to use for mDNS, by default all multicast-enabled interfaces
 	Interfaces []net.Interface
 
+	// IP protocol(s) for both client and server, default = IPv4AndIPv6.
+	// Note that service entries from others may still include addresses of either type.
+	IPType IPType
+
 	// While browsing, artificially shorten the life-time of them if their advertised TTL is higher,
 	// which helps detect services that disappear more promptly. Note that this results in more
-	// frequent "live-check" queries. If zero, the default will be 75 min.
+	// frequent "live-check" queries. Default is 75 min.
 	MaxAge time.Duration
 
 	// Server TXT entry
 	Text []string
 
-	// Server hostname, default = os.Hostname()
+	// Server hostname. Default is {os-hostname}.{domain}.
 	Hostname string
 
-	// Client and server domain, this should rarely be changed. default = "local"
+	// Client and server domain, this should rarely be changed. Default is `local`.
 	Domain string
 }
 
@@ -118,9 +119,10 @@ func Register(instance, serviceStr string, port uint16, conf *Config) (*Server, 
 		return nil, err
 	}
 
-	entry.AddrIPv4, entry.AddrIPv6 = conn.Addrs()
+	entry.Addrs = conn.Addrs()
+	entry.normalize()
 
-	if entry.AddrIPv4 == nil && entry.AddrIPv6 == nil {
+	if len(entry.Addrs) == 0 {
 		conn.Close()
 		return nil, fmt.Errorf("could not determine host IP addresses")
 	}
@@ -134,7 +136,7 @@ func Register(instance, serviceStr string, port uint16, conf *Config) (*Server, 
 
 // RegisterProxy registers a service proxy. This call will skip the hostname/IP lookup and
 // will use the provided values.
-func RegisterProxy(instance, serviceStr string, port uint16, host string, ips []string, conf *Config) (*Server, error) {
+func RegisterProxy(instance, serviceStr string, port uint16, host string, ips []netip.Addr, conf *Config) (*Server, error) {
 	if conf == nil {
 		conf = new(Config)
 	}
@@ -165,20 +167,9 @@ func RegisterProxy(instance, serviceStr string, port uint16, host string, ips []
 		entry.Hostname = fmt.Sprintf("%s.%s.", trimDot(entry.Hostname), trimDot(entry.Domain))
 	}
 
-	for _, ip := range ips {
-		ipAddr, err := netip.ParseAddr(ip)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse given IP: %v", ip)
-		} else if ipAddr.Is4() {
-			entry.AddrIPv4 = append(entry.AddrIPv4, ipAddr)
-		} else if ipAddr.Is6() {
-			entry.AddrIPv6 = append(entry.AddrIPv6, ipAddr)
-		} else {
-			return nil, fmt.Errorf("the IP is neither IPv4 nor IPv6: %#v", ipAddr)
-		}
-	}
+	entry.Addrs = ips
 
-	conn, err := newDualConn(conf.Interfaces, conf.IPType)
+	conn, err := newDualConn(conf.Interfaces, conf.ipType())
 	if err != nil {
 		return nil, err
 	}

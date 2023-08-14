@@ -78,11 +78,11 @@ func (c *dualConn) conns() (conns []conn) {
 	return
 }
 
-func (c *dualConn) Addrs() (v4, v6 []netip.Addr) {
-	var v6local []netip.Addr
+func (c *dualConn) Addrs() (addrs []netip.Addr) {
+	var v6, v6local []netip.Addr
 	for _, iface := range c.ifaces {
-		addrs, _ := iface.Addrs()
-		for _, address := range addrs {
+		ifaceAddrs, _ := iface.Addrs()
+		for _, address := range ifaceAddrs {
 			ipnet, ok := address.(*net.IPNet)
 			if !ok || ipnet.IP.IsLoopback() {
 				continue
@@ -93,7 +93,7 @@ func (c *dualConn) Addrs() (v4, v6 []netip.Addr) {
 			}
 			ip = ip.Unmap()
 			if ip.Is4() && iface.is4 {
-				v4 = append(v4, ip)
+				addrs = append(addrs, ip)
 			} else if ip.Is6() && iface.is6 {
 				if ip.IsGlobalUnicast() {
 					v6 = append(v6, ip)
@@ -106,7 +106,7 @@ func (c *dualConn) Addrs() (v4, v6 []netip.Addr) {
 	if len(v6) == 0 {
 		v6 = v6local
 	}
-	return
+	return append(addrs, v6...)
 }
 
 // Data receiving routine reads from connection, unpacks packets into dns.Msg

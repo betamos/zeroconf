@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
@@ -30,7 +31,8 @@ func main() {
 		Domain: *domain,
 	}
 
-	server, err := zeroconf.RegisterProxy(*name, *service, uint16(*port), *host, []string{*ip}, conf)
+	addrs := []netip.Addr{netip.MustParseAddr(*ip)}
+	server, err := zeroconf.RegisterProxy(*name, *service, uint16(*port), *host, addrs, conf)
 	if err != nil {
 		panic(err)
 	}

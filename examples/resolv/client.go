@@ -31,7 +31,7 @@ func main() {
 			if entry.Op == zeroconf.OpAdded {
 				sym = "[+]"
 			}
-			log.Println(sym, entry.Instance, entry.AddrIPv4, entry.AddrIPv6, entry.Port)
+			log.Println(sym, entry.Instance, entry.Addrs, entry.Port)
 		}
 		log.Println("No more entries.")
 	}(entries)

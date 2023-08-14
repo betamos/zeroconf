@@ -116,10 +116,9 @@ func parseServiceRecord(s string) *ServiceRecord {
 type ServiceEntry struct {
 	*ServiceRecord
 	Hostname string       `json:"hostname"` // Host machine DNS name
+	Addrs    []netip.Addr `json:"addrs"`    // Host IP addresses
 	Port     uint16       `json:"port"`     // Service Port
 	Text     []string     `json:"text"`     // Service info served as a TXT record
-	AddrIPv4 []netip.Addr `json:"-"`        // Host machine IPv4 address
-	AddrIPv6 []netip.Addr `json:"-"`        // Host machine IPv6 address
 	// TODO: Why not a single set of addrs?
 
 	// Internal expiry info used by cache
@@ -128,15 +127,14 @@ type ServiceEntry struct {
 }
 
 func (s *ServiceEntry) normalize() {
+	// TODO: Perhaps normalize and validate at the same time? E.g. addrs should be local?
 	if len(s.Subtypes) == 0 {
 		s.Subtypes = nil
 	}
 	slices.Sort(s.Subtypes)
 	slices.Compact(s.Subtypes)
-	slices.SortFunc(s.AddrIPv4, netip.Addr.Compare)
-	slices.Compact(s.AddrIPv4)
-	slices.SortFunc(s.AddrIPv6, netip.Addr.Compare)
-	slices.Compact(s.AddrIPv6)
+	slices.SortFunc(s.Addrs, netip.Addr.Compare)
+	slices.Compact(s.Addrs)
 	if len(s.Text) == 0 {
 		s.Text = nil
 	}
@@ -153,7 +151,7 @@ func (s *ServiceEntry) Equal(o *ServiceEntry) bool {
 	if s.Hostname != o.Hostname || s.Port != o.Port || !slices.Equal(s.Text, o.Text) {
 		return false
 	}
-	return slices.Equal(s.AddrIPv4, o.AddrIPv4) && slices.Equal(s.AddrIPv6, o.AddrIPv6)
+	return slices.Equal(s.Addrs, o.Addrs)
 }
 
 // newServiceEntry constructs a ServiceEntry.

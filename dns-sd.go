@@ -186,12 +186,12 @@ func serviceFromRecords(msg *dns.Msg, search *ServiceRecord) *ServiceEntry {
 				entry.Text = rr.Txt
 			}
 		case *dns.A:
-			if ip, ok := netip.AddrFromSlice(rr.A); rr.Hdr.Name == srv.Target && ok && ip.Is4() {
-				entry.AddrIPv4 = append(entry.AddrIPv4, ip.Unmap())
+			if ip, ok := netip.AddrFromSlice(rr.A); rr.Hdr.Name == srv.Target && ok {
+				entry.Addrs = append(entry.Addrs, ip.Unmap())
 			}
 		case *dns.AAAA:
-			if ip, ok := netip.AddrFromSlice(rr.AAAA); rr.Hdr.Name == srv.Target && ok && ip.Is6() {
-				entry.AddrIPv6 = append(entry.AddrIPv6, ip.Unmap())
+			if ip, ok := netip.AddrFromSlice(rr.AAAA); rr.Hdr.Name == srv.Target && ok {
+				entry.Addrs = append(entry.Addrs, ip)
 			}
 		}
 	}
@@ -213,7 +213,7 @@ func recordsFromService(entry *ServiceEntry, unannounce bool) (records []dns.RR)
 	hostname := entry.hostname()
 
 	// Pre-initialize length for efficiency
-	records = make([]dns.RR, 0, len(names)+len(entry.AddrIPv4)+len(entry.AddrIPv6)+3)
+	records = make([]dns.RR, 0, len(names)+len(entry.Addrs)+3)
 
 	// PTR records
 	for _, name := range names {
@@ -266,30 +266,29 @@ func recordsFromService(entry *ServiceEntry, unannounce bool) (records []dns.RR)
 		Txt: entry.Text,
 	})
 
-	// A records
-	for _, ipv4 := range entry.AddrIPv4 {
-		records = append(records, &dns.A{
-			Hdr: dns.RR_Header{
-				Name:   hostname,
-				Rrtype: dns.TypeA,
-				Class:  uniqueRecordClass,
-				Ttl:    hostRecordTTL,
-			},
-			A: ipv4.AsSlice(),
-		})
-	}
-
-	// AAAA records
-	for _, ipv6 := range entry.AddrIPv6 {
-		records = append(records, &dns.AAAA{
-			Hdr: dns.RR_Header{
-				Name:   hostname,
-				Rrtype: dns.TypeAAAA,
-				Class:  uniqueRecordClass,
-				Ttl:    hostRecordTTL,
-			},
-			AAAA: ipv6.AsSlice(),
-		})
+	// A and AAAA records
+	for _, addr := range entry.Addrs {
+		if addr.Is4() {
+			records = append(records, &dns.A{
+				Hdr: dns.RR_Header{
+					Name:   hostname,
+					Rrtype: dns.TypeA,
+					Class:  uniqueRecordClass,
+					Ttl:    hostRecordTTL,
+				},
+				A: addr.AsSlice(),
+			})
+		} else if addr.Is6() {
+			records = append(records, &dns.AAAA{
+				Hdr: dns.RR_Header{
+					Name:   hostname,
+					Rrtype: dns.TypeAAAA,
+					Class:  uniqueRecordClass,
+					Ttl:    hostRecordTTL,
+				},
+				AAAA: addr.AsSlice(),
+			})
+		}
 	}
 	return
 }
