@@ -136,7 +136,7 @@ func Register(instance, serviceStr string, port uint16, conf *Config) (*Server, 
 
 // RegisterProxy registers a service proxy. This call will skip the hostname/IP lookup and
 // will use the provided values.
-func RegisterProxy(instance, serviceStr string, port uint16, host string, ips []netip.Addr, conf *Config) (*Server, error) {
+func RegisterProxy(instance, serviceStr string, port uint16, addrs []netip.Addr, conf *Config) (*Server, error) {
 	if conf == nil {
 		conf = new(Config)
 	}
@@ -145,6 +145,7 @@ func RegisterProxy(instance, serviceStr string, port uint16, host string, ips []
 	entry.Port = port
 	entry.Text = conf.Text
 	entry.Hostname = conf.hostname()
+	entry.Addrs = addrs
 
 	// TODO: Don't repeat these checks, instead provide a ServiceEntry as argument
 	if entry.Instance == "" {
@@ -166,8 +167,6 @@ func RegisterProxy(instance, serviceStr string, port uint16, host string, ips []
 	if !strings.HasSuffix(trimDot(entry.Hostname), entry.Domain) {
 		entry.Hostname = fmt.Sprintf("%s.%s.", trimDot(entry.Hostname), trimDot(entry.Domain))
 	}
-
-	entry.Addrs = ips
 
 	conn, err := newDualConn(conf.Interfaces, conf.ipType())
 	if err != nil {
