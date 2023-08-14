@@ -3,21 +3,22 @@ package zeroconf
 import (
 	"context"
 	"log"
+	"slices"
 	"testing"
 	"time"
 )
 
 var (
-	mdnsName    = "test--xxxxxxxxxxxx"
-	mdnsService = "_test--xxxx._tcp"
-	mdnsSubtype = "_test--xxxx._tcp,_fancy"
-	mdnsDomain  = "local."
-	mdnsPort    = 8888
+	mdnsName           = "test--xxxxxxxxxxxx"
+	mdnsService        = "_test--xxxx._tcp"
+	mdnsSubtype        = "_test--xxxx._tcp,_fancy"
+	mdnsDomain         = "local"
+	mdnsPort    uint16 = 8888
 )
 
 var defaultConf = &Config{Text: []string{"txtv=0", "lo=1", "la=2"}, Domain: mdnsDomain}
 
-func startMDNS(t *testing.T, port int, name, service string, conf *Config) {
+func startMDNS(t *testing.T, port uint16, name, service string, conf *Config) {
 	// 5353 is default mdns port
 	server, err := Register(name, service, port, conf)
 	if err != nil {
@@ -144,26 +145,49 @@ func TestSubtype(t *testing.T) {
 			t.Fatalf("Expected port is %d, but got %d", mdnsPort, result.Port)
 		}
 	})
+}
 
-	t.Run("ttl", func(t *testing.T) {
-		conf := &Config{TTL: 1, Domain: mdnsDomain}
-		t.Cleanup(func() {
-		})
+func TestParse(t *testing.T) {
+	s := parseServiceRecord("_printer._sub.instance._service._tcp.local.")
+	if s == nil {
+		t.Fatalf("parsing failed")
+	}
+	if s.Instance != "instance" {
+		t.Fatalf("instance mismatch")
+	}
+	if s.Service != "_service._tcp" {
+		t.Fatalf("service mismatch")
+	}
+	if !slices.Equal(s.Subtypes, []string{"_printer"}) {
+		t.Fatalf("subtype mismatch")
+	}
+	if s.Domain != "local" {
+		t.Fatalf("domain mismatch")
+	}
+}
 
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype, conf)
+func TestFormatInstance(t *testing.T) {
+	s := &ServiceRecord{
+		Instance: "instance",
+		Service:  "_service._tcp",
+		Subtypes: []string{"_printer"},
+		Domain:   "local",
+	}
+	name, _ := s.queryName()
+	if name != "instance._service._tcp.local." {
+		t.Fatalf("formatting failed, expected ,, got %v", name)
+	}
+}
 
-		entries := make(chan Event, 100)
-		Browse(ctx, mdnsService, entries, defaultConf)
-
-		<-ctx.Done()
-		if len(entries) < 1 {
-			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
-		}
-		res := <-entries
-		if res.TTL != 1 {
-			t.Fatalf("expected TTL=1, got %d", res.TTL)
-		}
-	})
+func TestFormatService(t *testing.T) {
+	s := &ServiceRecord{
+		Instance: "",
+		Service:  "_service._tcp",
+		Subtypes: []string{"_printer"},
+		Domain:   "local",
+	}
+	name, _ := s.queryName()
+	if name != "_printer._sub._service._tcp.local." {
+		t.Fatalf("formatting failed, expected ,, got %v", name)
+	}
 }

@@ -3,10 +3,7 @@ package zeroconf
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math/rand"
-	"net/netip"
-	"strings"
 	"time"
 
 	"github.com/miekg/dns"
@@ -23,9 +20,6 @@ const (
 	IPv4        IPType = 0x01
 	IPv6        IPType = 0x02
 	IPv4AndIPv6        = IPv4 | IPv6 // default option
-
-	// Max time window to coalesce responses that occur simultaneously
-	maxCoalesceDuration = time.Millisecond * 25
 )
 
 // Client structure encapsulates both IPv4/IPv6 UDP connections.
@@ -34,14 +28,14 @@ type client struct {
 
 	service *ServiceRecord
 	cache   *cache
-
-	isBrowsing bool
 }
 
-// Browse for all services of a given type in a given domain.
+// Browse for all services of a given type, e.g. `_my-service._udp` or `_http._tcp`.
+// To browse only for specific subtypes, append it after a comma, e.g. `_my-service._tcp,_printer`.
 // Received entries are sent on the entries channel.
 // It blocks until the context is canceled (or an error occurs).
-func Browse(ctx context.Context, service string, entries chan<- Event, conf *Config) error {
+func Browse(ctx context.Context, serviceStr string, entries chan<- Event, conf *Config) error {
+	// TODO: Possibly construct a query instead of creating this record.
 	if conf == nil {
 		conf = new(Config)
 	}
@@ -49,11 +43,15 @@ func Browse(ctx context.Context, service string, entries chan<- Event, conf *Con
 	if err != nil {
 		return err
 	}
+	service, subtypes := parseSubtypes(serviceStr)
+	record, err := newServiceEnumerationRecord(service, conf.domain(), subtypes)
+	if err != nil {
+		return err
+	}
 	cl := &client{
-		conn:       conn,
-		cache:      newCache(entries, 0),
-		service:    newServiceRecord("", service, conf.domain()),
-		isBrowsing: true,
+		conn:    conn,
+		cache:   newCache(entries, conf.maxAge()),
+		service: record,
 	}
 	return cl.run(ctx)
 }
@@ -61,30 +59,32 @@ func Browse(ctx context.Context, service string, entries chan<- Event, conf *Con
 // Lookup a specific service by its name and type in a given domain.
 // Received entries are sent on the entries channel.
 // It blocks until the context is canceled (or an error occurs).
-func Lookup(ctx context.Context, instance, service string, entries chan<- Event, conf *Config) error {
-	if conf == nil {
-		conf = new(Config)
+func Lookup(ctx context.Context, instance, service string, conf *Config) (entry *ServiceEntry, err error) {
+	ctx, cancel := context.WithCancel(ctx)
+	events := make(chan Event, 1)
+	done := make(chan struct{})
+	go func() {
+		err = Browse(ctx, service, events, conf)
+		close(done)
+	}()
+	for event := range events {
+		if event.Op == OpAdded {
+			entry = event.ServiceEntry
+			break
+		}
 	}
-	conn, err := newDualConn(conf.Interfaces, conf.ipType())
-	if err != nil {
-		return err
+	cancel()
+	for range events {
 	}
-	cl := &client{
-		conn:       conn,
-		cache:      newCache(entries, 120),
-		service:    newServiceRecord("", service, conf.domain()),
-		isBrowsing: false,
-	}
-	return cl.run(ctx)
+	<-done
+	return
 }
 
 func (c *client) run(ctx context.Context) error {
-	if c.isBrowsing {
-		// RFC6762 Section 8.3: [...] a Multicast DNS querier SHOULD also delay the first query of
-		// the series by a randomly chosen amount in the range 20-120 ms.
-		if err := sleepContext(ctx, time.Duration(20+rand.Int63n(100))*time.Millisecond); err != nil {
-			return err
-		}
+	// RFC6762 Section 8.3: [...] a Multicast DNS querier SHOULD also delay the first query of
+	// the series by a randomly chosen amount in the range 20-120 ms.
+	if err := sleepContext(ctx, time.Duration(20+rand.Int63n(100))*time.Millisecond); err != nil {
+		return err
 	}
 
 	err := c.mainloop(ctx)
@@ -102,49 +102,34 @@ func (c *client) mainloop(ctx context.Context) error {
 
 	timer := time.NewTimer(0)
 	defer timer.Stop()
-	var now, nextDeadline time.Time
-	newEntries := make(map[string]*ServiceEntry)
+	var now time.Time
 	for {
+		var newEntry *ServiceEntry
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case now = <-timer.C:
 		case msg, ok := <-msgCh:
 			if !ok {
 				return nil
 			}
-			if !c.processMsg(newEntries, msg) {
-				continue // No changes, ignore
+			if newEntry = serviceFromRecords(msg.Msg, c.service); newEntry == nil {
+				continue
 			}
+
+			// Prepare to operate on the cache below
 			now = time.Now()
-			newDeadline := now.Add(maxCoalesceDuration)
-			if nextDeadline.Before(newDeadline) {
-				continue // Next deadline is already sooner, no need to update it
-			}
 			if !timer.Stop() {
 				<-timer.C
 			}
-			nextDeadline = newDeadline
-			timer.Reset(maxCoalesceDuration)
-			continue // Wait for more entries
-		case now = <-timer.C:
-			// Fall through to handle everything else
 		}
 
 		c.cache.Advance(now)
 
-		// Add new entries to the cache, if any
-		for k, e := range newEntries {
-			// If this is an DNS-SD query do not throw PTR away.
-			// It is expected to have only PTR for enumeration
-			if c.service.ServiceTypeName() != c.service.ServiceName() {
-				// Require at least one resolved IP address for ServiceEntry
-				if len(e.AddrIPv4) == 0 && len(e.AddrIPv6) == 0 {
-					continue
-				}
-			}
-			c.cache.Put(k, e)
+		if newEntry != nil {
+			c.cache.Put(newEntry)
+			newEntry = nil
 		}
-		clear(newEntries)
 
 		if c.cache.ShouldQuery() {
 			_ = c.query() // TODO: Log?
@@ -152,118 +137,21 @@ func (c *client) mainloop(ctx context.Context) error {
 		}
 
 		// Invariant: the timer is currently stopped, so can be safely reset
-		nextDeadline = c.cache.NextDeadline()
-		timer.Reset(nextDeadline.Sub(now))
+		timer.Reset(c.cache.NextDeadline().Sub(now))
 	}
-}
-
-// Appends entries from the response and reports conservatively if anything was changed
-func (c *client) processMsg(entries map[string]*ServiceEntry, msg MsgMeta) (changed bool) {
-	sections := append(msg.Answer, msg.Ns...)
-	sections = append(sections, msg.Extra...)
-
-	s := c.service // shorthand
-
-	for _, answer := range sections {
-		switch rr := answer.(type) {
-		case *dns.PTR:
-			if s.ServiceName() != rr.Hdr.Name {
-				continue
-			}
-			if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Ptr {
-				continue
-			}
-			if _, ok := entries[rr.Ptr]; !ok {
-				entries[rr.Ptr] = newServiceEntry(
-					trimDot(strings.Replace(rr.Ptr, rr.Hdr.Name, "", -1)),
-					s.Service,
-					s.Domain)
-			}
-			entries[rr.Ptr].TTL = rr.Hdr.Ttl
-			changed = true
-		case *dns.SRV:
-			if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Hdr.Name {
-				continue
-			} else if !strings.HasSuffix(rr.Hdr.Name, s.ServiceName()) {
-				continue
-			}
-			if _, ok := entries[rr.Hdr.Name]; !ok {
-				entries[rr.Hdr.Name] = newServiceEntry(
-					trimDot(strings.Replace(rr.Hdr.Name, s.ServiceName(), "", 1)),
-					s.Service,
-					s.Domain)
-			}
-			entries[rr.Hdr.Name].HostName = rr.Target
-			entries[rr.Hdr.Name].Port = int(rr.Port)
-			entries[rr.Hdr.Name].TTL = rr.Hdr.Ttl
-			changed = true
-		case *dns.TXT:
-			if s.ServiceInstanceName() != "" && s.ServiceInstanceName() != rr.Hdr.Name {
-				continue
-			} else if !strings.HasSuffix(rr.Hdr.Name, s.ServiceName()) {
-				continue
-			}
-			if _, ok := entries[rr.Hdr.Name]; !ok {
-				entries[rr.Hdr.Name] = newServiceEntry(
-					trimDot(strings.Replace(rr.Hdr.Name, s.ServiceName(), "", 1)),
-					s.Service,
-					s.Domain)
-			}
-			entries[rr.Hdr.Name].Text = rr.Txt
-			entries[rr.Hdr.Name].TTL = rr.Hdr.Ttl
-			changed = true
-		}
-	}
-	// Associate IPs in a second round as other fields should be filled by now.
-	for _, answer := range sections {
-		switch rr := answer.(type) {
-		case *dns.A:
-			ip, ok := netip.AddrFromSlice(rr.A)
-			if !ok {
-				continue
-			}
-			for k, e := range entries {
-				if e.HostName == rr.Hdr.Name {
-					entries[k].AddrIPv4 = append(entries[k].AddrIPv4, ip)
-					changed = true
-				}
-			}
-		case *dns.AAAA:
-			ip, ok := netip.AddrFromSlice(rr.AAAA)
-			if !ok {
-				continue
-			}
-			for k, e := range entries {
-				if e.HostName == rr.Hdr.Name {
-					entries[k].AddrIPv6 = append(entries[k].AddrIPv6, ip)
-					changed = true
-				}
-			}
-		}
-	}
-	return
 }
 
 // Performs the actual query by service name (browse) or service instance name (lookup),
 // start response listeners goroutines and loops over the entries channel.
 func (c *client) query() error {
-	var serviceName, serviceInstanceName string
-	s := c.service // shorthand
-	serviceName = fmt.Sprintf("%s.%s.", trimDot(s.Service), trimDot(s.Domain))
-
+	name, _ := c.service.queryName()
 	// send the query
 	m := new(dns.Msg)
-	if s.Instance != "" { // service instance name lookup
-		serviceInstanceName = fmt.Sprintf("%s.%s", s.Instance, serviceName)
-		m.Question = []dns.Question{
-			{Name: serviceInstanceName, Qtype: dns.TypeSRV, Qclass: dns.ClassINET},
-			{Name: serviceInstanceName, Qtype: dns.TypeTXT, Qclass: dns.ClassINET},
-		}
-	} else if len(s.Subtypes) > 0 { // service subtype browse
-		m.SetQuestion(s.Subtypes[0], dns.TypePTR)
-	} else { // service name browse
-		m.SetQuestion(serviceName, dns.TypePTR)
+	m.Question = []dns.Question{
+		{Name: name, Qtype: dns.TypePTR, Qclass: dns.ClassINET},
 	}
+	m.Id = dns.Id()
+	m.Compress = true
 	m.RecursionDesired = false
 	return c.conn.WriteMulticastAll(m)
 }

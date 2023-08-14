@@ -1,88 +1,164 @@
 package zeroconf
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
+	"strings"
 	"time"
+
+	"github.com/miekg/dns"
 )
 
-// ServiceRecord contains the basic description of a service, which contains instance name, service type & domain
+// ServiceRecord contains the basic description of a service.
+// It is used both in responding and enumerating.
 type ServiceRecord struct {
-	Instance string   `json:"name"`     // Instance name (e.g. "My web page")
-	Service  string   `json:"type"`     // Service name (e.g. _http._tcp.)
-	Subtypes []string `json:"subtypes"` // Service subtypes
-	Domain   string   `json:"domain"`   // If blank, assumes "local"
+	// Instance name, e.g. "Office Printer". If enumerating, this is blank.
+	Instance string `json:"name"`
 
-	// private variable populated on ServiceRecord creation
-	serviceName         string
-	serviceInstanceName string
-	serviceTypeName     string
+	// Service name, e.g. "_http._tcp"
+	Service string `json:"service"`
+
+	// Service subtypes, e.g. "_printer". If enumerating, only zero or one subtype is allowed.
+	// See RFC 6763 Section 7.1.
+	Subtypes []string `json:"subtypes"`
+
+	// Domain should be "local" for mDNS
+	Domain string `json:"domain"`
 }
 
-// ServiceName returns a complete service name (e.g. _foobar._tcp.local.), which is composed
-// of a service name (also referred as service type) and a domain.
-func (s *ServiceRecord) ServiceName() string {
-	return s.serviceName
+func newServiceEnumerationRecord(service, domain string, subtypes []string) (*ServiceRecord, error) {
+	if len(subtypes) > 1 {
+		return nil, errors.New("too many subtypes") // TODO: Too many subtypes
+	}
+	s := &ServiceRecord{
+		Service:  service,
+		Domain:   domain,
+		Subtypes: subtypes,
+	}
+	return s, nil
+}
+
+func (s *ServiceRecord) Equal(o *ServiceRecord) bool {
+	return s.Instance == o.Instance && s.Service == o.Service && s.Domain == o.Domain && slices.Equal(s.Subtypes, o.Subtypes)
+}
+
+// Returns the main service type, "_http._tcp.local." and any additional subtypes,
+// e.g. "_printer._sub._http._tcp.local.". Responders only.
+//
+// # See RFC6763 Section 7.1
+//
+// Format:
+// <instance>.<service>.<domain>.
+// <instance>._sub.<subtype>.<service>.<domain>.
+func (s *ServiceRecord) responderNames() (types []string) {
+	types = append(types, fmt.Sprintf("%s.%s.", s.Service, s.Domain))
+	for _, sub := range s.Subtypes {
+		types = append(types, fmt.Sprintf("%s._sub.%s.%s.", sub, s.Service, s.Domain))
+	}
+	return
+}
+
+// RFC 6763 Section 4.3: [...] the <Instance> portion is allowed to contain any characters
+// Spaces and backslashes are escaped by "github.com/miekg/dns".
+func (s *ServiceRecord) escapeInstance() string {
+	return strings.ReplaceAll(s.Instance, ".", "\\.")
+}
+
+// Returns the query DNS name to use in e.g. a PTR query, and whether the query is a instance
+// resolve query or not.
+func (s *ServiceRecord) queryName() (str string, resolve bool) {
+	if s.Instance != "" {
+		return fmt.Sprintf("%s.%s.%s.", s.escapeInstance(), s.Service, s.Domain), true
+	} else if len(s.Subtypes) > 0 {
+		return fmt.Sprintf("%s._sub.%s.%s.", s.Subtypes[0], s.Service, s.Domain), false
+	} else {
+		return fmt.Sprintf("%s.%s.", s.Service, s.Domain), false
+	}
 }
 
 // ServiceInstanceName returns a complete service instance name (e.g. MyDemo\ Service._foobar._tcp.local.),
 // which is composed from service instance name, service name and a domain.
-func (s *ServiceRecord) ServiceInstanceName() string {
-	return s.serviceInstanceName
+func (s *ServiceRecord) target() string {
+	return fmt.Sprintf("%s.%s.%s.", s.escapeInstance(), s.Service, s.Domain)
 }
 
-// ServiceTypeName returns the complete identifier for a DNS-SD query.
-func (s *ServiceRecord) ServiceTypeName() string {
-	return s.serviceTypeName
-}
+// Parse the service type into a record
+func parseServiceRecord(s string) *ServiceRecord {
+	// 4.3.  Internal Handling of Names says that instance name may contain dots. Escape!
+	// TODO: Lowercase, escape dots
 
-// newServiceRecord constructs a ServiceRecord.
-func newServiceRecord(instance, service, domain string) *ServiceRecord {
-	service, subtypes := parseSubtypes(service)
-	s := &ServiceRecord{
-		Instance:    instance,
-		Service:     service,
-		Domain:      domain,
-		serviceName: fmt.Sprintf("%s.%s.", trimDot(service), trimDot(domain)),
+	parts := dns.SplitDomainName(s)
+	// ["_sub", subtype, ...]
+	var subtypes []string
+	if len(parts) >= 2 && parts[1] == "_sub" {
+		subtypes = []string{parts[0]}
+		parts = parts[2:]
 	}
-
-	for _, subtype := range subtypes {
-		s.Subtypes = append(s.Subtypes, fmt.Sprintf("%s._sub.%s", trimDot(subtype), s.serviceName))
+	// [instance, service-id, service-proto, domain...]
+	if len(parts) < 4 {
+		return nil
 	}
-
-	// Cache service instance name
-	if instance != "" {
-		s.serviceInstanceName = fmt.Sprintf("%s.%s", trimDot(s.Instance), s.ServiceName())
+	instance, serviceId, serviceProto := parts[0], parts[1], parts[2]
+	if !(serviceProto == "_tcp" || serviceProto == "_udp") {
+		return nil
 	}
-
-	// Cache service type name domain
-	typeNameDomain := "local"
-	if len(s.Domain) > 0 {
-		typeNameDomain = trimDot(s.Domain)
-	}
-	s.serviceTypeName = fmt.Sprintf("_services._dns-sd._udp.%s.", typeNameDomain)
-
-	return s
+	instance = strings.ReplaceAll(instance, "\\", "")
+	domain := strings.Join(parts[3:], ".")
+	service := fmt.Sprintf("%s.%s", serviceId, serviceProto)
+	return &ServiceRecord{instance, service, subtypes, domain}
 }
 
 // ServiceEntry represents a browse/lookup result for client API.
 // It is also used to configure service registration (server API), which is
 // used to answer multicast queries.
 type ServiceEntry struct {
-	ServiceRecord
-	HostName string       `json:"hostname"` // Host machine DNS name
-	Port     int          `json:"port"`     // Service Port
+	*ServiceRecord
+	Hostname string       `json:"hostname"` // Host machine DNS name
+	Port     uint16       `json:"port"`     // Service Port
 	Text     []string     `json:"text"`     // Service info served as a TXT record
 	AddrIPv4 []netip.Addr `json:"-"`        // Host machine IPv4 address
 	AddrIPv6 []netip.Addr `json:"-"`        // Host machine IPv6 address
-	TTL      uint32       `json:"ttl"`      // Service TTL
+	// TODO: Why not a single set of addrs?
 
-	seenAt time.Time // Used by cache to calculate expiry
+	// Internal expiry info used by cache
+	ttl    uint32
+	seenAt time.Time
+}
+
+func (s *ServiceEntry) normalize() {
+	if len(s.Subtypes) == 0 {
+		s.Subtypes = nil
+	}
+	slices.Sort(s.Subtypes)
+	slices.Compact(s.Subtypes)
+	slices.SortFunc(s.AddrIPv4, netip.Addr.Compare)
+	slices.Compact(s.AddrIPv4)
+	slices.SortFunc(s.AddrIPv6, netip.Addr.Compare)
+	slices.Compact(s.AddrIPv6)
+	if len(s.Text) == 0 {
+		s.Text = nil
+	}
+}
+
+func (s *ServiceEntry) hostname() string {
+	return fmt.Sprintf("%v.", s.Hostname)
+}
+
+func (s *ServiceEntry) Equal(o *ServiceEntry) bool {
+	if !s.ServiceRecord.Equal(o.ServiceRecord) {
+		return false
+	}
+	if s.Hostname != o.Hostname || s.Port != o.Port || !slices.Equal(s.Text, o.Text) {
+		return false
+	}
+	return slices.Equal(s.AddrIPv4, o.AddrIPv4) && slices.Equal(s.AddrIPv6, o.AddrIPv6)
 }
 
 // newServiceEntry constructs a ServiceEntry.
-func newServiceEntry(instance, service string, domain string) *ServiceEntry {
+func newServiceEntry(instance, service string, domain string, subtypes []string) *ServiceEntry {
 	return &ServiceEntry{
-		ServiceRecord: *newServiceRecord(instance, service, domain),
+		ServiceRecord: &ServiceRecord{instance, service, nil, domain},
 	}
 }

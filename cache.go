@@ -8,6 +8,9 @@ import (
 const (
 	minInterval = 4 * time.Second
 	maxInterval = time.Hour
+
+	// TODO: Max time window to coalesce changes that occur simultaneously
+	// maxCoalesceDuration = time.Millisecond * 25
 )
 
 // An operation on the state of the cache.
@@ -44,7 +47,7 @@ type Event struct {
 type cache struct {
 	entries map[string]*ServiceEntry
 	events  chan<- Event
-	maxTTL  uint32
+	maxAge  time.Duration
 
 	// A number in range [0,1) used for query scheduling jitter. Regenerated at query time.
 	entropy float64
@@ -66,11 +69,11 @@ type cache struct {
 
 // Create a new cache with an event channel. If maxTTL is non-zero, entries in the cache are capped
 // to the provided duration in seconds.
-func newCache(events chan<- Event, maxTTL uint32) *cache {
+func newCache(events chan<- Event, maxAge time.Duration) *cache {
 	return &cache{
 		entries: make(map[string]*ServiceEntry),
 		events:  events,
-		maxTTL:  maxTTL,
+		maxAge:  maxAge,
 	}
 }
 
@@ -83,22 +86,23 @@ func (c *cache) Advance(now time.Time) {
 	c.refresh()
 }
 
-func (c *cache) Put(id string, entry *ServiceEntry) {
+func (c *cache) Put(entry *ServiceEntry) {
+	k := entry.Instance
 	entry.seenAt = c.now
-	if entry.TTL == 0 {
+	if entry.ttl == 0 {
 		// Existing entry removed through a "Goodbye Packet"
-		if _, ok := c.entries[id]; ok {
+		if _, ok := c.entries[k]; ok {
 			c.events <- Event{entry, OpRemoved}
 		}
-		delete(c.entries, id)
-	} else if _, ok := c.entries[id]; ok {
+		delete(c.entries, k)
+	} else if _, ok := c.entries[k]; ok {
 		// Existing entry extended, suppress duplicates
 		// TODO: Compare and send updates.
-		c.entries[id] = entry
+		c.entries[k] = entry
 	} else {
 		// New entry
 		c.events <- Event{entry, OpAdded}
-		c.entries[id] = entry
+		c.entries[k] = entry
 	}
 	c.refresh()
 }
@@ -129,7 +133,6 @@ func (c *cache) Queried() {
 
 // Returns the time for the next event, either a query or cache expiry
 func (c *cache) NextDeadline() time.Time {
-	// TODO: Add jitter to avoid timing collisions with other queriers.
 	soonest := c.nextPeriodic
 	if c.nextExpiry.Before(soonest) {
 		soonest = c.nextExpiry
@@ -152,13 +155,10 @@ func (c *cache) refresh() {
 	for k, entry := range c.entries {
 
 		// Compute inferred ttl
-		ttl := entry.TTL
-		if c.maxTTL != 0 && ttl > c.maxTTL {
-			ttl = c.maxTTL
-		}
+		ttl := min(c.maxAge, time.Second*time.Duration(entry.ttl))
 
 		// If expired, remove instantly
-		expiry := entry.seenAt.Add(time.Second * time.Duration(ttl))
+		expiry := entry.seenAt.Add(ttl)
 		if expiry.Before(c.now) {
 			c.events <- Event{entry, OpRemoved}
 			delete(c.entries, k)
@@ -176,7 +176,7 @@ func (c *cache) refresh() {
 		}
 
 		// Update next livecheck
-		floatDur := float64(ttl) * float64(time.Second) * (0.80 + c.entropy*0.17) // 80-97% of ttl
+		floatDur := float64(ttl) * (0.80 + c.entropy*0.17) // 80-97% of ttl
 		liveCheck := entry.seenAt.Add(time.Duration(floatDur))
 		if liveCheck.Before(c.nextLivecheck) {
 			c.nextLivecheck = liveCheck

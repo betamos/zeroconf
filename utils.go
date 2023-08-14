@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-var aLongTime = time.Hour * 24 * 365
-
 func parseSubtypes(service string) (string, []string) {
 	subtypes := strings.Split(service, ",")
 	return subtypes[0], subtypes[1:]

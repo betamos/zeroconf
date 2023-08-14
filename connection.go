@@ -21,8 +21,7 @@ var (
 		Port: 5353,
 	}
 	mdnsWildcardAddrIPv6 = &net.UDPAddr{
-		IP: net.ParseIP("ff02::"),
-		// IP:   net.ParseIP("fd00::12d3:26e7:48db:e7d"),
+		IP:   net.ParseIP("ff02::"),
 		Port: 5353,
 	}
 

@@ -10,9 +10,10 @@ import (
 )
 
 var (
-	service  = flag.String("service", "_workstation._tcp", "Set the service category to look for devices.")
-	domain   = flag.String("domain", "local", "Set the search domain. For local networks, default is fine.")
+	service  = flag.String("service", "_zeroconf-go._tcp", "Set the service category to look for devices.")
+	domain   = flag.String("domain", "", "Set the search domain. For local networks, default is fine.")
 	waitTime = flag.Int("wait", 10, "Duration in [s] to run discovery.")
+	maxAge   = flag.Int("max-age", 0, "Sets the max age in [s] of service records.")
 )
 
 func main() {
@@ -20,6 +21,7 @@ func main() {
 
 	conf := &zeroconf.Config{
 		Domain: *domain,
+		MaxAge: time.Duration(*maxAge) * time.Second,
 	}
 
 	entries := make(chan zeroconf.Event)
@@ -29,7 +31,7 @@ func main() {
 			if entry.Op == zeroconf.OpAdded {
 				sym = "[+]"
 			}
-			log.Println(sym, entry.ServiceInstanceName(), entry.AddrIPv4, entry.AddrIPv6, entry.Port)
+			log.Println(sym, entry.Instance, entry.AddrIPv4, entry.AddrIPv6, entry.Port)
 		}
 		log.Println("No more entries.")
 	}(entries)
