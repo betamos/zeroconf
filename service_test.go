@@ -3,7 +3,6 @@ package zeroconf
 import (
 	"context"
 	"log"
-	"slices"
 	"testing"
 	"time"
 )
@@ -59,12 +58,6 @@ func TestBasic(t *testing.T) {
 		t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 	}
 	result := <-entries
-	if result.Domain != mdnsDomain {
-		t.Fatalf("Expected domain is %s, but got %s", mdnsDomain, result.Domain)
-	}
-	if result.Service != mdnsService {
-		t.Fatalf("Expected service is %s, but got %s", mdnsService, result.Service)
-	}
 	if result.Instance != mdnsName {
 		t.Fatalf("Expected instance is %s, but got %s", mdnsName, result.Instance)
 	}
@@ -104,12 +97,6 @@ func TestSubtype(t *testing.T) {
 			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 		}
 		result := <-entries
-		if result.Domain != mdnsDomain {
-			t.Fatalf("Expected domain is %s, but got %s", mdnsDomain, result.Domain)
-		}
-		if result.Service != mdnsService {
-			t.Fatalf("Expected service is %s, but got %s", mdnsService, result.Service)
-		}
 		if result.Instance != mdnsName {
 			t.Fatalf("Expected instance is %s, but got %s", mdnsName, result.Instance)
 		}
@@ -132,12 +119,6 @@ func TestSubtype(t *testing.T) {
 			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 		}
 		result := <-entries
-		if result.Domain != mdnsDomain {
-			t.Fatalf("Expected domain is %s, but got %s", mdnsDomain, result.Domain)
-		}
-		if result.Service != mdnsService {
-			t.Fatalf("Expected service is %s, but got %s", mdnsService, result.Service)
-		}
 		if result.Instance != mdnsName {
 			t.Fatalf("Expected instance is %s, but got %s", mdnsName, result.Instance)
 		}
@@ -147,47 +128,31 @@ func TestSubtype(t *testing.T) {
 	})
 }
 
-func TestParse(t *testing.T) {
-	s := parseServiceRecord("_printer._sub.instance._service._tcp.local.")
-	if s == nil {
-		t.Fatalf("parsing failed")
+func TestParseInstancePath(t *testing.T) {
+	s, instance, err := parseInstancePath("A\\ Device._service._tcp.local.")
+	if err != nil {
+		t.Fatalf("parsing failed: %v", err)
 	}
-	if s.Instance != "instance" {
+	if instance != "A Device" {
 		t.Fatalf("instance mismatch")
 	}
-	if s.Service != "_service._tcp" {
+	if s.Type != "_service._tcp" {
 		t.Fatalf("service mismatch")
-	}
-	if !slices.Equal(s.Subtypes, []string{"_printer"}) {
-		t.Fatalf("subtype mismatch")
 	}
 	if s.Domain != "local" {
 		t.Fatalf("domain mismatch")
 	}
 }
 
-func TestFormatInstance(t *testing.T) {
+func TestQueryName(t *testing.T) {
 	s := &ServiceRecord{
-		Instance: "instance",
-		Service:  "_service._tcp",
+		Type:     "_service._tcp",
 		Subtypes: []string{"_printer"},
 		Domain:   "local",
 	}
-	name, _ := s.queryName()
-	if name != "instance._service._tcp.local." {
-		t.Fatalf("formatting failed, expected ,, got %v", name)
-	}
-}
-
-func TestFormatService(t *testing.T) {
-	s := &ServiceRecord{
-		Instance: "",
-		Service:  "_service._tcp",
-		Subtypes: []string{"_printer"},
-		Domain:   "local",
-	}
-	name, _ := s.queryName()
-	if name != "_printer._sub._service._tcp.local." {
-		t.Fatalf("formatting failed, expected ,, got %v", name)
+	name := s.queryName()
+	expect := "_printer._sub._service._tcp.local."
+	if name != expect {
+		t.Fatalf("expected %v, got %v", expect, name)
 	}
 }

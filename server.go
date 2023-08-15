@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -81,37 +80,18 @@ func (c *Config) hostname() string {
 // Service name should be on the form `_my-service._tcp` or `_my-service._udp`
 //
 // The service string may include subtypes, e.g. `_my-service._tcp,_printer,_ipp`
-func Register(instance, serviceStr string, port uint16, conf *Config) (*Server, error) {
+func Register(instance, serviceType string, port uint16, conf *Config) (*Server, error) {
 	if conf == nil {
 		conf = new(Config)
 	}
 
-	service, subtypes := parseSubtypes(serviceStr)
-	entry := newServiceEntry(instance, service, conf.domain(), subtypes)
-	entry.Port = port
-	entry.Text = conf.Text
-
-	if entry.Instance == "" {
-		return nil, fmt.Errorf("missing service instance name")
-	}
-	if entry.Service == "" {
-		return nil, fmt.Errorf("missing service name")
-	}
-	if entry.Domain == "" {
-		entry.Domain = "local"
-	}
-	if entry.Port == 0 {
-		return nil, fmt.Errorf("missing port")
+	service := &ServiceRecord{
+		Domain: conf.domain(),
 	}
 
-	var err error
-	entry.Hostname = conf.hostname()
-	if err != nil {
-		return nil, fmt.Errorf("could not determine host")
-	}
-
-	if !strings.HasSuffix(trimDot(entry.Hostname), entry.Domain) {
-		entry.Hostname = fmt.Sprintf("%s.%s.", trimDot(entry.Hostname), trimDot(entry.Domain))
+	service.Type, service.Subtypes = parseSubtypes(serviceType)
+	if err := service.Validate(); err != nil {
+		return nil, err
 	}
 
 	conn, err := newDualConn(conf.Interfaces, conf.ipType())
@@ -119,53 +99,55 @@ func Register(instance, serviceStr string, port uint16, conf *Config) (*Server, 
 		return nil, err
 	}
 
-	entry.Addrs = conn.Addrs()
-	entry.normalize()
-
-	if len(entry.Addrs) == 0 {
+	addrs := conn.Addrs()
+	if len(addrs) == 0 {
 		conn.Close()
 		return nil, fmt.Errorf("could not determine host IP addresses")
 	}
 
+	entry := &ServiceEntry{
+		Instance: instance,
+		Hostname: conf.hostname(),
+		Addrs:    addrs,
+		Port:     port,
+		Text:     conf.Text,
+	}
+	if err := entry.Validate(); err != nil {
+		conn.Close()
+		return nil, err
+	}
+
 	return &Server{
 		conn:    conn,
-		service: entry,
-		records: recordsFromService(entry, false),
+		service: service,
+		entry:   entry,
+		records: recordsFromService(service, entry, false),
 	}, nil
 }
 
 // RegisterProxy registers a service proxy. This call will skip the hostname/IP lookup and
 // will use the provided values.
-func RegisterProxy(instance, serviceStr string, port uint16, addrs []netip.Addr, conf *Config) (*Server, error) {
+func RegisterProxy(instance, serviceType string, hostname string, addrs []netip.Addr, port uint16, conf *Config) (*Server, error) {
 	if conf == nil {
 		conf = new(Config)
 	}
-	service, subtypes := parseSubtypes(serviceStr)
-	entry := newServiceEntry(instance, service, conf.domain(), subtypes)
-	entry.Port = port
-	entry.Text = conf.Text
-	entry.Hostname = conf.hostname()
-	entry.Addrs = addrs
-
-	// TODO: Don't repeat these checks, instead provide a ServiceEntry as argument
-	if entry.Instance == "" {
-		return nil, fmt.Errorf("missing service instance name")
-	}
-	if entry.Service == "" {
-		return nil, fmt.Errorf("missing service name")
-	}
-	if entry.Hostname == "" {
-		return nil, fmt.Errorf("missing host name")
-	}
-	if entry.Domain == "" {
-		entry.Domain = "local"
-	}
-	if entry.Port == 0 {
-		return nil, fmt.Errorf("missing port")
+	service := &ServiceRecord{
+		Domain: conf.domain(),
 	}
 
-	if !strings.HasSuffix(trimDot(entry.Hostname), entry.Domain) {
-		entry.Hostname = fmt.Sprintf("%s.%s.", trimDot(entry.Hostname), trimDot(entry.Domain))
+	service.Type, service.Subtypes = parseSubtypes(serviceType)
+	if err := service.Validate(); err != nil {
+		return nil, err
+	}
+	entry := &ServiceEntry{
+		Instance: instance,
+		Hostname: conf.hostname(),
+		Addrs:    addrs,
+		Port:     port,
+		Text:     conf.Text,
+	}
+	if err := entry.Validate(); err != nil {
+		return nil, err
 	}
 
 	conn, err := newDualConn(conf.Interfaces, conf.ipType())
@@ -175,14 +157,16 @@ func RegisterProxy(instance, serviceStr string, port uint16, addrs []netip.Addr,
 
 	return &Server{
 		conn:    conn,
-		service: entry,
-		records: recordsFromService(entry, false),
+		service: service,
+		entry:   entry,
+		records: recordsFromService(service, entry, false),
 	}, nil
 }
 
 // Server structure encapsulates both IPv4/IPv6 UDP connections
 type Server struct {
-	service *ServiceEntry
+	service *ServiceRecord
+	entry   *ServiceEntry
 	conn    *dualConn
 	records []dns.RR
 }
@@ -301,6 +285,6 @@ func (s *Server) unregister() error {
 	resp := new(dns.Msg)
 	resp.MsgHdr.Response = true
 	resp.Compress = true
-	resp.Answer = recordsFromService(s.service, true)
+	resp.Answer = recordsFromService(s.service, s.entry, true)
 	return s.conn.WriteMulticastAll(resp)
 }

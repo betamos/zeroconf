@@ -104,7 +104,7 @@ func (c *client) mainloop(ctx context.Context) error {
 	defer timer.Stop()
 	var now time.Time
 	for {
-		var newEntry *ServiceEntry
+		var entries []*ServiceEntry
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -113,7 +113,8 @@ func (c *client) mainloop(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			if newEntry = serviceFromRecords(msg.Msg, c.service); newEntry == nil {
+
+			if entries = serviceFromRecords(msg.Msg, c.service); entries == nil {
 				continue
 			}
 
@@ -126,10 +127,10 @@ func (c *client) mainloop(ctx context.Context) error {
 
 		c.cache.Advance(now)
 
-		if newEntry != nil {
-			c.cache.Put(newEntry)
-			newEntry = nil
+		for _, entry := range entries {
+			c.cache.Put(entry)
 		}
+		clear(entries)
 
 		if c.cache.ShouldQuery() {
 			_ = c.query() // TODO: Log?
@@ -144,12 +145,12 @@ func (c *client) mainloop(ctx context.Context) error {
 // Performs the actual query by service name (browse) or service instance name (lookup),
 // start response listeners goroutines and loops over the entries channel.
 func (c *client) query() error {
-	name, _ := c.service.queryName()
-	// send the query
 	m := new(dns.Msg)
-	m.Question = []dns.Question{
-		{Name: name, Qtype: dns.TypePTR, Qclass: dns.ClassINET},
-	}
+	m.Question = append(m.Question, dns.Question{
+		Name:   c.service.queryName(),
+		Qtype:  dns.TypePTR,
+		Qclass: dns.ClassINET,
+	})
 	m.Id = dns.Id()
 	m.Compress = true
 	m.RecursionDesired = false

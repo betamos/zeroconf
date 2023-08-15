@@ -3,6 +3,8 @@ package zeroconf
 import (
 	"fmt"
 	"net/netip"
+	"slices"
+	"strings"
 
 	"github.com/miekg/dns"
 )
@@ -142,64 +144,75 @@ srvLoop:
 
 // Return a single service entry from the msg that matches the "search record" provided.
 // Typically, the search record is a "browsing" record for a service (i.e. no instance).
-func serviceFromRecords(msg *dns.Msg, search *ServiceRecord) *ServiceEntry {
+func serviceFromRecords(msg *dns.Msg, search *ServiceRecord) (entries []*ServiceEntry) {
 	// TODO: Support meta-queries
-	// TODO: Support multiple entries, possibly using extraRecords
 	var (
-		answers     = append(msg.Answer, msg.Extra...)
-		question, _ = search.queryName()
-		ptrTo       string
-		srv         *dns.SRV
+		answers  = append(msg.Answer, msg.Extra...)
+		question = search.queryName()
+		m        = make(map[string]*ServiceEntry, 1) // temporary map of instance paths to entries
+		addrMap  = make(map[string][]netip.Addr, 1)
+		entry    *ServiceEntry
 	)
 
+	// PTR, then SRV + TXT, then A and AAAA. The following loop depends on it
+	slices.SortFunc(answers, byRecordType)
+
 	for _, answer := range answers {
 		switch rr := answer.(type) {
+		// Phase 1: create entries
 		case *dns.PTR:
-			if rr.Hdr.Name == question {
-				ptrTo = rr.Ptr
+			if rr.Hdr.Name != question { // match question, e.g. `_printer._sub._http._tcp.`
+				continue
 			}
+
+			// pointer to instance path, e.g. `My Printer._http._tcp.`
+			record, instance, err := parseInstancePath(rr.Ptr)
+			if err == nil && search.Equal(record) {
+
+				m[rr.Ptr] = &ServiceEntry{Instance: instance}
+			}
+
+		// Phase 2: populate other fields
 		case *dns.SRV:
-			srv = rr
-		}
-	}
-	if srv == nil || ptrTo != srv.Hdr.Name {
-		return nil
-	}
-
-	// TODO: Verify that the parsed entry matches the query.
-	record := parseServiceRecord(srv.Hdr.Name)
-	if record == nil {
-		return nil
-	}
-	entry := &ServiceEntry{
-		ServiceRecord: record,
-		Hostname:      trimDot(srv.Target), // TODO: Unescape hostname
-		Port:          srv.Port,
-		ttl:           srv.Hdr.Ttl,
-	}
-
-	for _, answer := range answers {
-
-		switch rr := answer.(type) {
-		case *dns.TXT:
-			if rr.Hdr.Name == srv.Hdr.Name {
-				entry.Text = rr.Txt
+			if entry = m[rr.Hdr.Name]; entry == nil {
+				continue
 			}
+			entry.Hostname = rr.Target
+			entry.Port = rr.Port
+			entry.ttl = rr.Hdr.Ttl
+		case *dns.TXT:
+			if entry = m[rr.Hdr.Name]; entry == nil {
+				continue
+			}
+			entry.Text = rr.Txt
+
+		// Phase 3: add addrs to addrMap
 		case *dns.A:
-			if ip, ok := netip.AddrFromSlice(rr.A); rr.Hdr.Name == srv.Target && ok {
-				entry.Addrs = append(entry.Addrs, ip.Unmap())
+			if ip, ok := netip.AddrFromSlice(rr.A); ok {
+				addrMap[rr.Hdr.Name] = append(addrMap[rr.Hdr.Name], ip.Unmap())
 			}
 		case *dns.AAAA:
-			if ip, ok := netip.AddrFromSlice(rr.AAAA); rr.Hdr.Name == srv.Target && ok {
-				entry.Addrs = append(entry.Addrs, ip)
+			if ip, ok := netip.AddrFromSlice(rr.AAAA); ok {
+				addrMap[rr.Hdr.Name] = append(addrMap[rr.Hdr.Name], ip)
 			}
 		}
 	}
-	entry.normalize()
-	return entry
+
+	for _, entry := range m {
+		entry.Addrs = addrMap[entry.Hostname]
+
+		// Unescape afterwards to maintain comparison soundness above
+		entry.Hostname = strings.ReplaceAll(entry.Hostname, "\\", "")
+		entry.normalize()
+		if err := entry.Validate(); err != nil {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	return
 }
 
-func recordsFromService(entry *ServiceEntry, unannounce bool) (records []dns.RR) {
+func recordsFromService(service *ServiceRecord, entry *ServiceEntry, unannounce bool) (records []dns.RR) {
 
 	// RFC6762 Section 10: Records referencing a hostname (SRV/A/AAAA) SHOULD use TTL of 120 s,
 	// to account for network interface and IP address changes, while others should be 75 min.
@@ -208,8 +221,8 @@ func recordsFromService(entry *ServiceEntry, unannounce bool) (records []dns.RR)
 		hostRecordTTL, defaultTTL = 0, 0
 	}
 
-	names := entry.responderNames()
-	target := entry.target()
+	names := service.responderNames()
+	instancePath := instancePath(service, entry)
 	hostname := entry.hostname()
 
 	// Pre-initialize length for efficiency
@@ -224,7 +237,7 @@ func recordsFromService(entry *ServiceEntry, unannounce bool) (records []dns.RR)
 				Class:  sharedRecordClass,
 				Ttl:    defaultTTL,
 			},
-			Ptr: target,
+			Ptr: instancePath,
 		})
 	}
 
@@ -235,18 +248,18 @@ func recordsFromService(entry *ServiceEntry, unannounce bool) (records []dns.RR)
 	// label <Service> name, plus the same domain, e.g., "_http._tcp.<Domain>".
 	records = append(records, &dns.PTR{
 		Hdr: dns.RR_Header{
-			Name:   fmt.Sprintf("_services._dns-sd._udp.%v.", entry.Domain),
+			Name:   fmt.Sprintf("_services._dns-sd._udp.%v.", service.Domain),
 			Rrtype: dns.TypePTR,
 			Class:  sharedRecordClass,
 			Ttl:    defaultTTL,
 		},
-		Ptr: fmt.Sprintf("%v.%v.", entry.Service, entry.Domain),
+		Ptr: fmt.Sprintf("%v.%v.", service.Type, service.Domain),
 	})
 
 	// SRV record
 	records = append(records, &dns.SRV{
 		Hdr: dns.RR_Header{
-			Name:   target,
+			Name:   instancePath,
 			Rrtype: dns.TypeSRV,
 			Class:  uniqueRecordClass,
 			Ttl:    defaultTTL,
@@ -258,7 +271,7 @@ func recordsFromService(entry *ServiceEntry, unannounce bool) (records []dns.RR)
 	// TXT record
 	records = append(records, &dns.TXT{
 		Hdr: dns.RR_Header{
-			Name:   target,
+			Name:   instancePath,
 			Rrtype: dns.TypeTXT,
 			Class:  uniqueRecordClass,
 			Ttl:    defaultTTL,
@@ -291,4 +304,21 @@ func recordsFromService(entry *ServiceEntry, unannounce bool) (records []dns.RR)
 		}
 	}
 	return
+}
+
+// Compare records by type for indirection order of DNS-SD
+func byRecordType(a, b dns.RR) int {
+	return recordOrder(a) - recordOrder(b)
+}
+
+func recordOrder(rr dns.RR) int {
+	switch rr.Header().Rrtype {
+	case dns.TypePTR: // Points at SRV, TXT
+		return 0
+	case dns.TypeSRV, dns.TypeTXT: // Points at A, AAAA
+		return 1
+	case dns.TypeA, dns.TypeAAAA:
+		return 2
+	}
+	return 3
 }
