@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
-	"strings"
 
 	"github.com/miekg/dns"
 )
@@ -202,8 +201,8 @@ func serviceFromRecords(msg *dns.Msg, search *ServiceRecord) (entries []*Service
 		entry.Addrs = addrMap[entry.Hostname]
 
 		// Unescape afterwards to maintain comparison soundness above
-		entry.Hostname = strings.ReplaceAll(entry.Hostname, "\\", "")
-		entry.normalize()
+		entry.Hostname = unescapeDns(entry.Hostname)
+		entry.Hostname = trimDot(entry.Hostname)
 		if err := entry.Validate(); err != nil {
 			continue
 		}

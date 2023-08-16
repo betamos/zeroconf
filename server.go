@@ -141,7 +141,7 @@ func RegisterProxy(instance, serviceType string, hostname string, addrs []netip.
 	}
 	entry := &ServiceEntry{
 		Instance: instance,
-		Hostname: conf.hostname(),
+		Hostname: hostname,
 		Addrs:    addrs,
 		Port:     port,
 		Text:     conf.Text,

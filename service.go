@@ -111,7 +111,7 @@ func parseInstancePath(s string) (service *ServiceRecord, instance string, err e
 		return nil, "", fmt.Errorf("not enough components")
 	}
 	// 4.3.  Internal Handling of Names says that instance name may contain dots.
-	instance = strings.ReplaceAll(parts[0], "\\", "")
+	instance = unescapeDns(parts[0])
 	ty := fmt.Sprintf("%s.%s", parts[1], parts[2])
 	domain := strings.Join(parts[3:], ".")
 	service = &ServiceRecord{ty, subtypes, domain}
