@@ -32,9 +32,9 @@ type client struct {
 
 // Browse for all services of a given type, e.g. `_my-service._udp` or `_http._tcp`.
 // To browse only for specific subtypes, append it after a comma, e.g. `_my-service._tcp,_printer`.
-// Received entries are sent on the entries channel.
+// Events are sent to the provided callback.
 // It blocks until the context is canceled (or an error occurs).
-func Browse(ctx context.Context, serviceStr string, entries chan<- Event, conf *Config) error {
+func Browse(ctx context.Context, serviceStr string, cb func(Event), conf *Config) error {
 	// TODO: Possibly construct a query instead of creating this record.
 	if conf == nil {
 		conf = new(Config)
@@ -50,33 +50,22 @@ func Browse(ctx context.Context, serviceStr string, entries chan<- Event, conf *
 	}
 	cl := &client{
 		conn:    conn,
-		cache:   newCache(entries, conf.maxAge()),
+		cache:   newCache(cb, conf.maxAge()),
 		service: record,
 	}
 	return cl.run(ctx)
 }
 
-// Lookup a specific service by its name and type in a given domain.
-// Received entries are sent on the entries channel.
-// It blocks until the context is canceled (or an error occurs).
+// Lookup a specific instance of a service.
 func Lookup(ctx context.Context, instance, service string, conf *Config) (entry *ServiceEntry, err error) {
 	ctx, cancel := context.WithCancel(ctx)
-	events := make(chan Event, 1)
-	done := make(chan struct{})
-	go func() {
-		err = Browse(ctx, service, events, conf)
-		close(done)
-	}()
-	for event := range events {
+	err = Browse(ctx, service, func(event Event) {
 		if event.Op == OpAdded {
 			entry = event.ServiceEntry
-			break
+			cancel()
 		}
-	}
+	}, conf)
 	cancel()
-	for range events {
-	}
-	<-done
 	return
 }
 
@@ -89,7 +78,6 @@ func (c *client) run(ctx context.Context) error {
 
 	err := c.mainloop(ctx)
 
-	c.cache.Close()
 	err = errors.Join(err, c.conn.Close())
 	return err
 }

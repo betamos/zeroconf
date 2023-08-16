@@ -51,7 +51,7 @@ func (e Event) String() string {
 // expire entries and inform when new queries are needed.
 type cache struct {
 	entries map[string]*ServiceEntry
-	events  chan<- Event
+	cb      func(Event)
 	maxAge  time.Duration
 
 	// A number in range [0,1) used for query scheduling jitter. Regenerated at query time.
@@ -72,12 +72,12 @@ type cache struct {
 	nextPeriodic time.Time
 }
 
-// Create a new cache with an event channel. If maxTTL is non-zero, entries in the cache are capped
+// Create a new cache with an event callback. If maxTTL is non-zero, entries in the cache are capped
 // to the provided duration in seconds.
-func newCache(events chan<- Event, maxAge time.Duration) *cache {
+func newCache(cb func(Event), maxAge time.Duration) *cache {
 	return &cache{
 		entries: make(map[string]*ServiceEntry),
-		events:  events,
+		cb:      cb,
 		maxAge:  maxAge,
 	}
 }
@@ -97,7 +97,7 @@ func (c *cache) Put(entry *ServiceEntry) {
 	if entry.ttl == 0 {
 		// Existing entry removed through a "Goodbye Packet"
 		if _, ok := c.entries[k]; ok {
-			c.events <- Event{entry, OpRemoved}
+			c.cb(Event{entry, OpRemoved})
 		}
 		delete(c.entries, k)
 	} else if _, ok := c.entries[k]; ok {
@@ -106,7 +106,7 @@ func (c *cache) Put(entry *ServiceEntry) {
 		c.entries[k] = entry
 	} else {
 		// New entry
-		c.events <- Event{entry, OpAdded}
+		c.cb(Event{entry, OpAdded})
 		c.entries[k] = entry
 	}
 	c.refresh()
@@ -148,11 +148,6 @@ func (c *cache) NextDeadline() time.Time {
 	return soonest
 }
 
-// Close the event channel
-func (c *cache) Close() {
-	close(c.events)
-}
-
 // Recalculates nextExpiry and nextLivecheck
 func (c *cache) refresh() {
 	// Use maxInterval simply for a large time value
@@ -165,7 +160,7 @@ func (c *cache) refresh() {
 		// If expired, remove instantly
 		expiry := entry.seenAt.Add(ttl)
 		if expiry.Before(c.now) {
-			c.events <- Event{entry, OpRemoved}
+			c.cb(Event{entry, OpRemoved})
 			delete(c.entries, k)
 			continue
 		}
