@@ -11,30 +11,34 @@ var (
 	mdnsName           = "test--xxxxxxxxxxxx"
 	mdnsService        = "_test--xxxx._tcp"
 	mdnsSubtype        = "_test--xxxx._tcp,_fancy"
-	mdnsDomain         = "local"
 	mdnsPort    uint16 = 8888
 )
 
-var defaultConf = &Config{Text: []string{"txtv=0", "lo=1", "la=2"}, Domain: mdnsDomain}
-
-func startMDNS(t *testing.T, port uint16, name, service string, conf *Config) {
-	// 5353 is default mdns port
-	server, err := Register(name, service, port, conf)
+func startMDNS(t *testing.T, port uint16, name, service string) {
+	entry := &ServiceEntry{
+		Instance: name,
+		Port:     port,
+	}
+	server, err := Publish(entry, service, nil)
 	if err != nil {
 		t.Fatalf("error while registering mdns service: %s", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	go server.Serve(ctx)
 	t.Cleanup(cancel)
-	log.Printf("Published service: %s, type: %s, domain: %s", name, service, conf.Domain)
+	log.Printf("Published service: %s, type: %s", name, service)
 }
 
 func TestQuickShutdown(t *testing.T) {
-	server, err := Register(mdnsName, mdnsService, mdnsPort, nil)
+	entry := &ServiceEntry{
+		Instance: mdnsName,
+		Port:     mdnsPort,
+	}
+	server, err := Publish(entry, mdnsService, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-
+	defer server.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	t0 := time.Now()
@@ -47,17 +51,18 @@ func TestQuickShutdown(t *testing.T) {
 func TestBasic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+	startMDNS(t, mdnsPort, mdnsName, mdnsService)
 
-	startMDNS(t, mdnsPort, mdnsName, mdnsService, defaultConf)
-
-	entries := make(chan Event, 100)
-	Browse(ctx, mdnsService, entries, defaultConf)
+	entries := make([]Event, 0)
+	Browse(ctx, mdnsService, func(e Event) {
+		entries = append(entries, e)
+	}, nil)
 	<-ctx.Done()
 
 	if len(entries) < 1 {
 		t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 	}
-	result := <-entries
+	result := entries[0]
 	if result.Instance != mdnsName {
 		t.Fatalf("Expected instance is %s, but got %s", mdnsName, result.Instance)
 	}
@@ -66,20 +71,19 @@ func TestBasic(t *testing.T) {
 	}
 }
 
-func TestNoRegister(t *testing.T) {
-	// before register, mdns resolve shuold not have any entry
-	entries := make(chan Event)
-	go func(results <-chan Event) {
-		s, ok := <-results
-		if ok {
-			t.Errorf("Expected empty service entries but got %v", s)
-		}
-	}(entries)
+func TestNoPublish(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	Browse(ctx, mdnsService, entries, defaultConf)
+	defer cancel()
+	entries := make([]Event, 0)
+	Browse(ctx, mdnsService, func(e Event) {
+		entries = append(entries, e)
+	}, nil)
 	<-ctx.Done()
-	cancel()
+
+	if len(entries) > 0 {
+		t.Fatalf("Expected 0 service entries, but got %d", len(entries))
+	}
 }
 
 func TestSubtype(t *testing.T) {
@@ -87,16 +91,18 @@ func TestSubtype(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype, defaultConf)
+		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype)
 
-		entries := make(chan Event, 100)
-		Browse(ctx, mdnsService, entries, defaultConf)
+		entries := make([]Event, 0)
+		Browse(ctx, mdnsService, func(e Event) {
+			entries = append(entries, e)
+		}, nil)
 		<-ctx.Done()
 
 		if len(entries) < 1 {
 			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 		}
-		result := <-entries
+		result := entries[0]
 		if result.Instance != mdnsName {
 			t.Fatalf("Expected instance is %s, but got %s", mdnsName, result.Instance)
 		}
@@ -109,16 +115,18 @@ func TestSubtype(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype, defaultConf)
+		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype)
 
-		entries := make(chan Event, 100)
-		Browse(ctx, mdnsService, entries, defaultConf)
+		entries := make([]Event, 0)
+		Browse(ctx, mdnsService, func(e Event) {
+			entries = append(entries, e)
+		}, nil)
 		<-ctx.Done()
 
 		if len(entries) < 1 {
 			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 		}
-		result := <-entries
+		result := entries[0]
 		if result.Instance != mdnsName {
 			t.Fatalf("Expected instance is %s, but got %s", mdnsName, result.Instance)
 		}

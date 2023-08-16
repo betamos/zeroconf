@@ -43,7 +43,7 @@ type Event struct {
 }
 
 func (e Event) String() string {
-	return fmt.Sprintf("%v %v (%v)", e.Op, e.Instance, e.Hostname)
+	return fmt.Sprintf("%v %v", e.Op, e.ServiceEntry)
 }
 
 // The cache maintains a map of service entries and notifies the user of changes.

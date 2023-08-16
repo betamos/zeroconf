@@ -125,18 +125,28 @@ func parseInstancePath(s string) (service *ServiceRecord, instance string, err e
 // It is also used to configure service registration (server API), which is
 // used to answer multicast queries.
 type ServiceEntry struct {
-	// Instance name, e.g. "Office Printer" (spaces, dots, hyphens etc allowed).
-	// If enumerating, this is blank.
-	Instance string       `json:"name"`
-	Hostname string       `json:"hostname"` // Host machine DNS name
-	Addrs    []netip.Addr `json:"addrs"`    // Host IP addresses
-	Port     uint16       `json:"port"`     // Service Port
-	Text     []string     `json:"text"`     // Service info served as a TXT record
-	// TODO: Why not a single set of addrs?
+	// Instance name, e.g. `Mr. Office Printer`  (avoid backslash)
+	Instance string `json:"name"`
+
+	// Port number, must be positive
+	Port uint16 `json:"port"`
+
+	// Optional additional text (avoid backslash)
+	Text []string `json:"text"`
+
+	// Hostname, e.g. `Bryans-Mac.local`
+	Hostname string `json:"hostname"`
+
+	// IP addresses
+	Addrs []netip.Addr `json:"addrs"`
 
 	// Internal expiry info used by cache
 	ttl    uint32
 	seenAt time.Time
+}
+
+func (s *ServiceEntry) String() string {
+	return fmt.Sprintf("%v (%v)", s.Instance, s.Hostname)
 }
 
 func (s *ServiceEntry) Validate() error {

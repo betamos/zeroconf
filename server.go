@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/netip"
 	"os"
 	"sync"
 	"time"
@@ -32,12 +31,6 @@ type Config struct {
 	// which helps detect services that disappear more promptly. Note that this results in more
 	// frequent "live-check" queries. Default is 75 min.
 	MaxAge time.Duration
-
-	// Server TXT entry
-	Text []string
-
-	// Server hostname. Default is {os-hostname}.{domain}.
-	Hostname string
 
 	// Client and server domain, this should rarely be changed. Default is `local`.
 	Domain string
@@ -66,21 +59,12 @@ func (c *Config) domain() string {
 	return c.Domain
 }
 
-func (c *Config) hostname() string {
-	// TODO: Likely prone to conflicts and domain-name unfriendly, potentially generate and sanitize
-	if c.Hostname == "" {
-		return fmt.Sprintf("%v.%v", defaultHostname, "local")
-	}
-	return c.Hostname
-}
-
-// Register a service by given arguments. This call will take the system's hostname
-// and lookup IP by that hostname.
+// Publish a service entry. Instance and Port are required, while Text is optional.
+// Addrs and Hostname are determined automatically, but can be overriden.
 //
-// Service name should be on the form `_my-service._tcp` or `_my-service._udp`
-//
-// The service string may include subtypes, e.g. `_my-service._tcp,_printer,_ipp`
-func Register(instance, serviceType string, port uint16, conf *Config) (*Server, error) {
+// Service type should be on the form `_my-service._tcp` or `_my-service._udp`.
+// Append any subtypes with a comma, e.g. `_my-service._tcp,_printer,_ipp`.
+func Publish(entry *ServiceEntry, serviceType string, conf *Config) (*Server, error) {
 	if conf == nil {
 		conf = new(Config)
 	}
@@ -98,60 +82,14 @@ func Register(instance, serviceType string, port uint16, conf *Config) (*Server,
 	if err != nil {
 		return nil, err
 	}
-
-	addrs := conn.Addrs()
-	if len(addrs) == 0 {
-		conn.Close()
-		return nil, fmt.Errorf("could not determine host IP addresses")
+	if entry.Addrs == nil {
+		entry.Addrs = conn.Addrs()
 	}
-
-	entry := &ServiceEntry{
-		Instance: instance,
-		Hostname: conf.hostname(),
-		Addrs:    addrs,
-		Port:     port,
-		Text:     conf.Text,
+	if entry.Hostname == "" {
+		entry.Hostname = fmt.Sprintf("%v.%v", defaultHostname, service.Domain)
 	}
 	if err := entry.Validate(); err != nil {
 		conn.Close()
-		return nil, err
-	}
-
-	return &Server{
-		conn:    conn,
-		service: service,
-		entry:   entry,
-		records: recordsFromService(service, entry, false),
-	}, nil
-}
-
-// RegisterProxy registers a service proxy. This call will skip the hostname/IP lookup and
-// will use the provided values.
-func RegisterProxy(instance, serviceType string, hostname string, addrs []netip.Addr, port uint16, conf *Config) (*Server, error) {
-	if conf == nil {
-		conf = new(Config)
-	}
-	service := &ServiceRecord{
-		Domain: conf.domain(),
-	}
-
-	service.Type, service.Subtypes = parseSubtypes(serviceType)
-	if err := service.Validate(); err != nil {
-		return nil, err
-	}
-	entry := &ServiceEntry{
-		Instance: instance,
-		Hostname: hostname,
-		Addrs:    addrs,
-		Port:     port,
-		Text:     conf.Text,
-	}
-	if err := entry.Validate(); err != nil {
-		return nil, err
-	}
-
-	conn, err := newDualConn(conf.Interfaces, conf.ipType())
-	if err != nil {
 		return nil, err
 	}
 
