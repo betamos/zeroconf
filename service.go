@@ -139,13 +139,7 @@ type ServiceEntry struct {
 	seenAt time.Time
 }
 
-func (s *ServiceEntry) normalize() {
-	slices.SortFunc(s.Addrs, netip.Addr.Compare)
-	slices.Compact(s.Addrs)
-}
-
 func (s *ServiceEntry) Validate() error {
-	s.normalize()
 	if s.Hostname == "" {
 		return errors.New("no instance specified")
 	}
@@ -166,6 +160,7 @@ func (s *ServiceEntry) Equal(o *ServiceEntry) bool {
 	if s.Hostname != o.Hostname || s.Port != o.Port || !slices.Equal(s.Text, o.Text) {
 		return false
 	}
+	// Note we're not sorting ("normalizing") addresses, since the order can indicate preference
 	return slices.Equal(s.Addrs, o.Addrs)
 }
 
