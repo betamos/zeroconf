@@ -202,6 +202,9 @@ func serviceFromRecords(msg *dns.Msg, search *ServiceRecord) (entries []*Service
 
 		// Unescape afterwards to maintain comparison soundness above
 		entry.Hostname = unescapeDns(entry.Hostname)
+		for i, txt := range entry.Text {
+			entry.Text[i] = unescapeDns(txt)
+		}
 		entry.Hostname = trimDot(entry.Hostname)
 		if err := entry.Validate(); err != nil {
 			continue
