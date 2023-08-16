@@ -8,17 +8,14 @@ import (
 	"os/signal"
 	"syscall"
 
-	"time"
-
 	"github.com/betamos/zeroconf/v2"
 )
 
 var (
-	name     = flag.String("name", "A Regular Instance", "The name for the service.")
-	service  = flag.String("service", "_zeroconf-go._tcp", "Set the service type of the new service.")
-	domain   = flag.String("domain", "", "Set the network domain. Default should be fine.")
-	port     = flag.Int("port", 42424, "Set the port the service is listening to.")
-	waitTime = flag.Int("wait", 10, "Duration in [s] to publish service for.")
+	name    = flag.String("name", "A Regular Instance", "The name for the service.")
+	service = flag.String("service", "_zeroconf-go._tcp", "Set the service type of the new service.")
+	domain  = flag.String("domain", "", "Set the network domain. Default should be fine.")
+	port    = flag.Int("port", 42424, "Set the port the service is listening to.")
 )
 
 func main() {
@@ -41,9 +38,7 @@ func main() {
 	log.Println("- Domain:", *domain)
 	log.Println("- Port:", *port)
 
-	sigCtx, sigCancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer sigCancel()
-	ctx, cancel := context.WithTimeout(sigCtx, time.Second*time.Duration(*waitTime))
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	err = server.Serve(ctx)

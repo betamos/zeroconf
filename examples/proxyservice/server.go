@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/betamos/zeroconf/v2"
 )
@@ -20,7 +19,6 @@ var (
 	hostname = flag.String("hostname", "proxy-test.local", "Set host name for service.")
 	ip       = flag.String("ip", "::1", "Set IP a service should be reachable.")
 	port     = flag.Int("port", 42424, "Set the port the service is listening to.")
-	waitTime = flag.Int("wait", 10, "Duration in [s] to publish service for.")
 )
 
 func main() {
@@ -46,9 +44,7 @@ func main() {
 	log.Println("- Hostname:", *hostname)
 	log.Println("- IP:", *ip)
 
-	sigCtx, sigCancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer sigCancel()
-	ctx, cancel := context.WithTimeout(sigCtx, time.Second*time.Duration(*waitTime))
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	err = server.Serve(ctx)
