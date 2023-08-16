@@ -26,12 +26,8 @@ func main() {
 
 	entries := make(chan zeroconf.Event)
 	go func(results <-chan zeroconf.Event) {
-		for entry := range results {
-			sym := "[-]"
-			if entry.Op == zeroconf.OpAdded {
-				sym = "[+]"
-			}
-			log.Println(sym, entry.Instance, entry.Hostname, entry.Addrs, entry.Port)
+		for event := range results {
+			log.Println(event)
 		}
 		log.Println("No more entries.")
 	}(entries)

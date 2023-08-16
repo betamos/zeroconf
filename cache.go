@@ -1,6 +1,7 @@
 package zeroconf
 
 import (
+	"fmt"
 	"math/rand"
 	"time"
 )
@@ -19,11 +20,11 @@ type Op int
 func (op Op) String() string {
 	switch op {
 	case OpAdded:
-		return "OpAdded"
+		return "[+]"
 	case OpRemoved:
-		return "OpRemoved"
+		return "[-]"
 	default:
-		return "<OpUnknown>"
+		return "[?]"
 	}
 }
 
@@ -39,6 +40,10 @@ const (
 type Event struct {
 	*ServiceEntry
 	Op Op
+}
+
+func (e Event) String() string {
+	return fmt.Sprintf("%v %v (%v)", e.Op, e.Instance, e.Hostname)
 }
 
 // The cache maintains a map of service entries and notifies the user of changes.
