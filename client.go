@@ -60,7 +60,7 @@ func Browse(ctx context.Context, serviceStr string, cb func(Event), conf *Config
 func Lookup(ctx context.Context, instance, service string, conf *Config) (entry *ServiceEntry, err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	err = Browse(ctx, service, func(event Event) {
-		if event.Op == OpAdded {
+		if event.Op == OpAdded && instance == event.Instance {
 			entry = event.ServiceEntry
 			cancel()
 		}
