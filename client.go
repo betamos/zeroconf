@@ -147,5 +147,10 @@ func (c *client) query() error {
 	m.Id = dns.Id()
 	m.Compress = true
 	m.RecursionDesired = false
-	return c.conn.WriteMulticastAll(m)
+
+	var errs []error
+	for _, iface := range c.conn.ifaces {
+		errs = append(errs, c.conn.WriteMulticast(m, iface.Index, nil))
+	}
+	return errors.Join(errs...)
 }

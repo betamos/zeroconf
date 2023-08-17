@@ -3,6 +3,7 @@ package zeroconf
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/netip"
 	"sync"
@@ -13,23 +14,36 @@ import (
 
 type Interface struct {
 	net.Interface
-	is4, is6 bool
+	v4, v6 []netip.Addr // If no addr, the iface is ignored while communicating
+}
+
+func (i *Interface) String() string {
+	return fmt.Sprintf("iface %v (%v) %v %v", i.Index, i.Name, i.v4, i.v6)
 }
 
 // Client structure encapsulates both IPv4/IPv6 UDP connections.
 type dualConn struct {
 	c4     *conn4
 	c6     *conn6
-	ifaces []*Interface
+	ifaces map[int]*Interface // key: iface.Index
+
+	// Used initially and on reload to filter interfaces to use, default = net.Interfaces
+	ifacesFn func() ([]net.Interface, error)
 }
 
-func newDualConn(ifaces []net.Interface, ipType IPType) (*dualConn, error) {
+func newDualConn(ifacesFn func() ([]net.Interface, error), ipType IPType) (*dualConn, error) {
 
 	if (ipType&IPv4) == 0 && (ipType&IPv6) == 0 {
 		return nil, errors.New("invalid ip type")
 	}
+	if ifacesFn == nil {
+		ifacesFn = net.Interfaces
+	}
 
-	c := new(dualConn)
+	c := &dualConn{
+		ifaces:   make(map[int]*Interface),
+		ifacesFn: ifacesFn,
+	}
 	var err error
 	// IPv4 interfaces
 	if (ipType & IPv4) > 0 {
@@ -42,30 +56,45 @@ func newDualConn(ifaces []net.Interface, ipType IPType) (*dualConn, error) {
 	if (ipType & IPv6) > 0 {
 		c.c6, err = newConn6()
 		if err != nil {
+			c.Close() // Closes c4, if any
 			return nil, err
 		}
 	}
-
-	if ifaces == nil {
-		ifaces, _ = net.Interfaces()
-	}
-	for _, iface := range ifaces {
-		if !isMulticastInterface(iface) {
-			continue
-		}
-		iface2 := &Interface{Interface: iface}
-		if c.c4 != nil {
-			err = c.c4.JoinMulticast(iface)
-			iface2.is4 = err == nil
-		}
-		if c.c6 != nil {
-			err = c.c6.JoinMulticast(iface)
-			iface2.is6 = err == nil
-		}
-		c.ifaces = append(c.ifaces, iface2)
+	if err := c.loadIfaces(); err != nil {
+		c.Close()
+		return nil, err
 	}
 
 	return c, nil
+}
+
+// Load ifaces (can be done)
+func (c *dualConn) loadIfaces() error {
+	netIfaces, err := c.ifacesFn()
+	for _, netIface := range netIfaces {
+		if !isMulticastInterface(netIface) {
+			continue
+		}
+		v4, v6, err := netIfaceAddrs(netIface)
+		if err != nil {
+			continue
+		}
+		iface := &Interface{Interface: netIface}
+		if c.c4 != nil && len(v4) > 0 {
+			if c.c4.JoinMulticast(netIface) == nil {
+				iface.v4 = v4
+			}
+		}
+		if c.c6 != nil {
+			if c.c6.JoinMulticast(netIface) == nil {
+				iface.v6 = v6
+			}
+		}
+		if len(iface.v4) > 0 || len(iface.v6) > 0 {
+			c.ifaces[iface.Index] = iface
+		}
+	}
+	return err
 }
 
 func (c *dualConn) conns() (conns []conn) {
@@ -76,37 +105,6 @@ func (c *dualConn) conns() (conns []conn) {
 		conns = append(conns, c.c6)
 	}
 	return
-}
-
-func (c *dualConn) Addrs() (addrs []netip.Addr) {
-	var v6, v6local []netip.Addr
-	for _, iface := range c.ifaces {
-		ifaceAddrs, _ := iface.Addrs()
-		for _, address := range ifaceAddrs {
-			ipnet, ok := address.(*net.IPNet)
-			if !ok || ipnet.IP.IsLoopback() {
-				continue
-			}
-			ip, ok := netip.AddrFromSlice(ipnet.IP)
-			if !ok {
-				continue
-			}
-			ip = ip.Unmap()
-			if ip.Is4() && iface.is4 {
-				addrs = append(addrs, ip)
-			} else if ip.Is6() && iface.is6 {
-				if ip.IsGlobalUnicast() {
-					v6 = append(v6, ip)
-				} else if ip.IsLinkLocalUnicast() {
-					v6local = append(v6local, ip)
-				}
-			}
-		}
-	}
-	if len(v6) == 0 {
-		v6 = v6local
-	}
-	return append(addrs, v6...)
 }
 
 // Data receiving routine reads from connection, unpacks packets into dns.Msg
@@ -134,6 +132,9 @@ func recvLoop(c conn, msgCh chan MsgMeta) error {
 		if err != nil {
 			return err
 		}
+		if ifIndex == 0 {
+			log.Printf("[ERR] zeroconf read: iface index 0, from %v\n", from)
+		}
 		msg := new(dns.Msg)
 		if err := msg.Unpack(buf[:n]); err != nil {
 			// log.Printf("[WARN] mdns: Failed to unpack packet: %v", err)
@@ -141,10 +142,6 @@ func recvLoop(c conn, msgCh chan MsgMeta) error {
 		}
 		msgCh <- MsgMeta{msg, from, ifIndex}
 	}
-}
-
-func (c *dualConn) WriteMulticastAll(msg *dns.Msg) error {
-	return c.WriteMulticast(msg, 0, nil)
 }
 
 func (c *dualConn) WriteUnicast(msg *dns.Msg, ifIndex int, dst net.Addr) (err error) {
@@ -176,10 +173,10 @@ func (c *dualConn) WriteMulticast(msg *dns.Msg, ifIndex int, dst net.Addr) error
 		ty := addrType(dst)
 
 		// TODO: Log failures
-		if c.c4 != nil && iface.is4 && (ty&IPv4) > 0 {
+		if len(iface.v4) > 0 && (ty&IPv4) > 0 {
 			c.c4.WriteMulticast(buf, iface.Interface)
 		}
-		if c.c6 != nil && iface.is6 && (ty&IPv6) > 0 {
+		if len(iface.v6) > 0 && (ty&IPv6) > 0 {
 			c.c6.WriteMulticast(buf, iface.Interface)
 		}
 	}
@@ -216,4 +213,37 @@ func (c *dualConn) Close() error {
 		errs = append(errs, conn.Close())
 	}
 	return errors.Join(errs...)
+}
+
+// Returns mDNS-suitable unicast addresses for a net.Interface
+func netIfaceAddrs(iface net.Interface) (v4, v6 []netip.Addr, err error) {
+	var v6local []netip.Addr
+	ifaceAddrs, err := iface.Addrs()
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, address := range ifaceAddrs {
+		ipnet, ok := address.(*net.IPNet)
+		if !ok || ipnet.IP.IsLoopback() {
+			continue
+		}
+		ip, ok := netip.AddrFromSlice(ipnet.IP)
+		if !ok {
+			continue
+		}
+		ip = ip.Unmap()
+		if ip.Is4() {
+			v4 = append(v4, ip)
+		} else if ip.Is6() {
+			if ip.IsGlobalUnicast() {
+				v6 = append(v6, ip)
+			} else if ip.IsLinkLocalUnicast() {
+				v6local = append(v6local, ip)
+			}
+		}
+	}
+	if len(v6) == 0 {
+		v6 = v6local
+	}
+	return
 }

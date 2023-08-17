@@ -6,8 +6,9 @@ import (
 )
 
 type Config struct {
-	// Interfaces to use for mDNS, by default all multicast-enabled interfaces
-	Interfaces []net.Interface
+	// Interfaces to use for mDNS, net.Interfaces by default. Interfaces that don't support
+	// multicast are filtered out.
+	Interfaces func() ([]net.Interface, error)
 
 	// IP protocol(s) for both client and server, default = IPv4AndIPv6.
 	// Note that service entries from others may still include addresses of either type.

@@ -43,9 +43,6 @@ func Publish(ctx context.Context, entry *ServiceEntry, serviceType string, conf 
 	if err != nil {
 		return err
 	}
-	if entry.Addrs == nil {
-		entry.Addrs = conn.Addrs()
-	}
 	if entry.Hostname == "" {
 		entry.Hostname = fmt.Sprintf("%v.%v", defaultHostname, service.Domain)
 	}
@@ -58,7 +55,6 @@ func Publish(ctx context.Context, entry *ServiceEntry, serviceType string, conf 
 		conn:    conn,
 		service: service,
 		entry:   entry,
-		records: recordsFromService(service, entry, false),
 	}
 	err = s.serve(ctx)
 	s.conn.Close()
@@ -70,7 +66,6 @@ type server struct {
 	service *ServiceRecord
 	entry   *ServiceEntry
 	conn    *dualConn
-	records []dns.RR
 }
 
 func (s *server) serve(ctx context.Context) error {
@@ -116,12 +111,34 @@ func (s *server) recv(ctx context.Context) {
 	}
 }
 
+// Generate DNS records with the IPs (A/AAAA) for the provided interface (unless addrs were
+// provided by the user).
+func (s *server) recordsForIface(iface *Interface, unannounce bool) []dns.RR {
+	// Copy the entry to create a new one with the right ips
+	entry := *s.entry
+
+	if len(s.entry.Addrs) == 0 {
+		entry.Addrs = append(entry.Addrs, iface.v4...)
+		entry.Addrs = append(entry.Addrs, iface.v6...)
+	}
+
+	return recordsFromService(s.service, &entry, unannounce)
+}
+
 // handleQuery is used to handle an incoming query
 func (s *server) handleQuery(query *dns.Msg, ifIndex int, from net.Addr) (err error) {
+
 	// RFC6762 Section 8.2: Probing messages are ignored, for now.
-	if len(query.Ns) > 0 {
+	if len(query.Ns) > 0 || len(query.Question) == 0 {
 		return nil
 	}
+	iface := s.conn.ifaces[ifIndex]
+	if iface == nil {
+		return nil
+	}
+
+	// TODO: Cache these records in a iface idx -> records map
+	records := s.recordsForIface(iface, false)
 
 	// RFC6762 Section 5.2: Multiple questions in the same message are responded to individually.
 	for _, q := range query.Question {
@@ -134,11 +151,11 @@ func (s *server) handleQuery(query *dns.Msg, ifIndex int, from net.Addr) (err er
 		resp.Authoritative = true
 		resp.Question = nil // RFC6762 Section 6: "responses MUST NOT contain any questions"
 
-		resp.Answer = answerTo(s.records, query.Answer, q)
+		resp.Answer = answerTo(records, query.Answer, q)
 		if len(resp.Answer) == 0 {
 			continue
 		}
-		resp.Extra = extraRecords(s.records, resp.Answer)
+		resp.Extra = extraRecords(records, resp.Answer)
 
 		if q.Qclass&qClassUnicastResponse != 0 {
 			err = s.conn.WriteUnicast(&resp, ifIndex, from)
@@ -162,14 +179,18 @@ func (s *server) announce(ctx context.Context) error {
 	//    at least a factor of two with every response sent.
 
 	timeout := time.Second
-	resp := new(dns.Msg)
-	resp.MsgHdr.Response = true
-	resp.MsgHdr.Authoritative = true
-	resp.Compress = true
-	resp.Answer = append(resp.Answer, s.records...)
 	for i := 0; i < announceCount; i++ {
-		if err := s.conn.WriteMulticastAll(resp); err != nil {
-			log.Printf("[ERR] zeroconf: failed to send announcement: %v\n", err)
+		for _, iface := range s.conn.ifaces {
+
+			resp := new(dns.Msg)
+			resp.MsgHdr.Response = true
+			resp.MsgHdr.Authoritative = true
+			resp.Compress = true
+
+			resp.Answer = s.recordsForIface(iface, false)
+			if err := s.conn.WriteMulticast(resp, iface.Index, nil); err != nil {
+				log.Printf("[ERR] zeroconf: failed to send announcement: %v\n", err)
+			}
 		}
 		if err := sleepContext(ctx, timeout); err != nil {
 			return err
@@ -180,9 +201,15 @@ func (s *server) announce(ctx context.Context) error {
 }
 
 func (s *server) unregister() error {
-	resp := new(dns.Msg)
-	resp.MsgHdr.Response = true
-	resp.Compress = true
-	resp.Answer = recordsFromService(s.service, s.entry, true)
-	return s.conn.WriteMulticastAll(resp)
+
+	for _, iface := range s.conn.ifaces {
+		resp := new(dns.Msg)
+		resp.MsgHdr.Response = true
+		resp.Compress = true
+		resp.Answer = s.recordsForIface(iface, true)
+		if err := s.conn.WriteMulticast(resp, iface.Index, nil); err != nil {
+			log.Printf("[ERR] zeroconf: failed to send unannouncement: %v\n", err)
+		}
+	}
+	return nil
 }
