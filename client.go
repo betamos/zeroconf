@@ -43,15 +43,20 @@ func Browse(ctx context.Context, serviceStr string, cb func(Event), conf *Config
 	if err != nil {
 		return err
 	}
-	service, subtypes := parseSubtypes(serviceStr)
-	record, err := newServiceEnumerationRecord(service, conf.domain(), subtypes)
+	service := parseService(serviceStr)
+	if len(service.Subtypes) > 1 {
+		return errors.New("browsing supports only a single subtype")
+	}
+	if err = service.Validate(); err != nil {
+		return err
+	}
 	if err != nil {
 		return err
 	}
 	cl := &client{
 		conn:    conn,
 		cache:   newCache(cb, conf.maxAge()),
-		service: record,
+		service: service,
 	}
 	return cl.run(ctx)
 }

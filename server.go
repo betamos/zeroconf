@@ -31,9 +31,6 @@ type Config struct {
 	// which helps detect services that disappear more promptly. Note that this results in more
 	// frequent "live-check" queries. Default is 75 min.
 	MaxAge time.Duration
-
-	// Client and server domain, this should rarely be changed. Default is `local`.
-	Domain string
 }
 
 var defaultHostname, _ = os.Hostname()
@@ -52,28 +49,20 @@ func (c *Config) maxAge() time.Duration {
 	return max(5*time.Second, c.MaxAge)
 }
 
-func (c *Config) domain() string {
-	if c.Domain == "" {
-		return "local"
-	}
-	return c.Domain
-}
-
 // Publish a service entry. Instance and Port are required, while Text is optional.
 // Addrs and Hostname are determined automatically, but can be overriden.
 //
-// Service type should be on the form `_my-service._tcp` or `_my-service._udp`.
-// Append any subtypes with a comma, e.g. `_my-service._tcp,_printer,_ipp`.
+// Service type should be on the form `_my-service._tcp` or `_my-service._udp`
+//
+// You may add subtypes after a comma, e.g. `_my-service._tcp,_printer,_ipp`.
+// By default, the domain `local` is used, but you can override it by adding
+// path components, e.g. `_my-service._tcp.custom.dev` (not recommended).
 func Publish(entry *ServiceEntry, serviceType string, conf *Config) (*Server, error) {
 	if conf == nil {
 		conf = new(Config)
 	}
 
-	service := &ServiceRecord{
-		Domain: conf.domain(),
-	}
-
-	service.Type, service.Subtypes = parseSubtypes(serviceType)
+	service := parseService(serviceType)
 	if err := service.Validate(); err != nil {
 		return nil, err
 	}

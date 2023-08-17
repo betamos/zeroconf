@@ -8,11 +8,6 @@ import (
 	"time"
 )
 
-func parseSubtypes(service string) (string, []string) {
-	subtypes := strings.Split(service, ",")
-	return subtypes[0], subtypes[1:]
-}
-
 // sleep with cancelation
 func sleepContext(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)

@@ -26,16 +26,22 @@ type ServiceRecord struct {
 	Domain string `json:"domain"`
 }
 
-func newServiceEnumerationRecord(service, domain string, subtypes []string) (*ServiceRecord, error) {
-	if len(subtypes) > 1 {
-		return nil, errors.New("too many subtypes") // TODO: Too many subtypes
-	}
+// Takes a service string on the form _type._proto(.domain)? and turns it into a service record.
+// Should be validated afterwards.
+func parseService(service string) *ServiceRecord {
+	typeParts := strings.Split(service, ",")
 	s := &ServiceRecord{
-		Type:     service,
-		Domain:   domain,
-		Subtypes: subtypes,
+		Type:     typeParts[0],
+		Subtypes: typeParts[1:],
 	}
-	return s, nil
+	pathParts := strings.Split(typeParts[0], ".")
+	i := min(2, len(pathParts))
+	s.Type = strings.Join(pathParts[0:i], ".")
+	s.Domain = strings.Join(pathParts[i:], ".")
+	if s.Domain == "" {
+		s.Domain = "local"
+	}
+	return s
 }
 
 // Equality *without* subtypes
