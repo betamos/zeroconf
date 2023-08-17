@@ -154,7 +154,8 @@ func serviceFromRecords(msg *dns.Msg, search *ServiceRecord) (entries []*Service
 	)
 
 	// PTR, then SRV + TXT, then A and AAAA. The following loop depends on it
-	slices.SortFunc(answers, byRecordType)
+	// Note that stable sort is necessary to preserve order of A and AAAA records
+	slices.SortStableFunc(answers, byRecordType)
 
 	for _, answer := range answers {
 		switch rr := answer.(type) {
