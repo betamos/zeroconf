@@ -281,6 +281,19 @@ func recordsFromService(service *ServiceRecord, entry *ServiceEntry, unannounce 
 		Txt: entry.Text,
 	})
 
+	// NSEC for SRV, TXT
+	// See RFC 6762 Section 6.1: Negative Responses
+	records = append(records, &dns.NSEC{
+		Hdr: dns.RR_Header{
+			Name:   instancePath,
+			Rrtype: dns.TypeNSEC,
+			Class:  uniqueRecordClass,
+			Ttl:    defaultTTL,
+		},
+		NextDomain: instancePath,
+		TypeBitMap: []uint16{dns.TypeTXT, dns.TypeSRV},
+	})
+
 	// A and AAAA records
 	for _, addr := range entry.Addrs {
 		if addr.Is4() {
@@ -305,6 +318,18 @@ func recordsFromService(service *ServiceRecord, entry *ServiceEntry, unannounce 
 			})
 		}
 	}
+
+	// NSEC for A, AAAA
+	records = append(records, &dns.NSEC{
+		Hdr: dns.RR_Header{
+			Name:   hostname,
+			Rrtype: dns.TypeNSEC,
+			Class:  uniqueRecordClass,
+			Ttl:    hostRecordTTL,
+		},
+		NextDomain: hostname,
+		TypeBitMap: []uint16{dns.TypeA, dns.TypeAAAA},
+	})
 	return
 }
 
