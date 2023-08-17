@@ -29,19 +29,19 @@ var defaultHostname, _ = os.Hostname()
 // You may add subtypes after a comma, e.g. `_my-service._tcp,_printer,_ipp`.
 // By default, the domain `local` is used, but you can override it by adding
 // path components, e.g. `_my-service._tcp.custom.dev` (not recommended).
-func Publish(entry *ServiceEntry, serviceType string, conf *Config) (*Server, error) {
+func Publish(ctx context.Context, entry *ServiceEntry, serviceType string, conf *Config) error {
 	if conf == nil {
 		conf = new(Config)
 	}
 
 	service := parseService(serviceType)
 	if err := service.Validate(); err != nil {
-		return nil, err
+		return err
 	}
 
 	conn, err := newDualConn(conf.Interfaces, conf.ipType())
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if entry.Addrs == nil {
 		entry.Addrs = conn.Addrs()
@@ -51,26 +51,29 @@ func Publish(entry *ServiceEntry, serviceType string, conf *Config) (*Server, er
 	}
 	if err := entry.Validate(); err != nil {
 		conn.Close()
-		return nil, err
+		return err
 	}
 
-	return &Server{
+	s := &server{
 		conn:    conn,
 		service: service,
 		entry:   entry,
 		records: recordsFromService(service, entry, false),
-	}, nil
+	}
+	err = s.serve(ctx)
+	s.conn.Close()
+	return err
 }
 
 // Server structure encapsulates both IPv4/IPv6 UDP connections
-type Server struct {
+type server struct {
 	service *ServiceRecord
 	entry   *ServiceEntry
 	conn    *dualConn
 	records []dns.RR
 }
 
-func (s *Server) Serve(ctx context.Context) error {
+func (s *server) serve(ctx context.Context) error {
 	s.conn.SetDeadline(time.Time{})
 
 	var wg sync.WaitGroup
@@ -95,12 +98,8 @@ func (s *Server) Serve(ctx context.Context) error {
 	return errors.Join(context.Cause(ctx), s.unregister())
 }
 
-func (s *Server) Close() error {
-	return s.conn.Close()
-}
-
 // recv4 is a long running routine to receive packets from an interface
-func (s *Server) recv(ctx context.Context) {
+func (s *server) recv(ctx context.Context) {
 	msgCh := make(chan MsgMeta, 32)
 	go s.conn.RunReader(msgCh)
 
@@ -118,7 +117,7 @@ func (s *Server) recv(ctx context.Context) {
 }
 
 // handleQuery is used to handle an incoming query
-func (s *Server) handleQuery(query *dns.Msg, ifIndex int, from net.Addr) (err error) {
+func (s *server) handleQuery(query *dns.Msg, ifIndex int, from net.Addr) (err error) {
 	// RFC6762 Section 8.2: Probing messages are ignored, for now.
 	if len(query.Ns) > 0 {
 		return nil
@@ -152,7 +151,7 @@ func (s *Server) handleQuery(query *dns.Msg, ifIndex int, from net.Addr) (err er
 }
 
 // Perform probing & announcement
-func (s *Server) announce(ctx context.Context) error {
+func (s *server) announce(ctx context.Context) error {
 	// TODO: implement a proper probing & conflict resolution
 
 	// From RFC6762
@@ -180,7 +179,7 @@ func (s *Server) announce(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) unregister() error {
+func (s *server) unregister() error {
 	resp := new(dns.Msg)
 	resp.MsgHdr.Response = true
 	resp.Compress = true

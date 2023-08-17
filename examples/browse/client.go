@@ -34,6 +34,6 @@ func main() {
 		log.Println(event, event.Addrs)
 	}, conf)
 	if err != nil {
-		log.Println("Failed to browse:", err)
+		log.Println("browse done:", err)
 	}
 }

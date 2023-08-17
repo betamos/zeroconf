@@ -38,18 +38,12 @@ func main() {
 		}
 	}
 
-	server, err := zeroconf.Publish(entry, *service, nil)
-	if err != nil {
-		panic(err)
-	}
-	defer server.Close()
-
-	log.Printf("published [%v]: %v\n", *service, entry)
+	log.Printf("publishing [%v]: %v\n", *service, entry)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	err = server.Serve(ctx)
+	err := zeroconf.Publish(ctx, entry, *service, nil)
 	log.Println("server closed", err)
 
 }

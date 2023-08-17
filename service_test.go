@@ -19,12 +19,9 @@ func startMDNS(t *testing.T, port uint16, name, service string) {
 		Instance: name,
 		Port:     port,
 	}
-	server, err := Publish(entry, service, nil)
-	if err != nil {
-		t.Fatalf("error while registering mdns service: %s", err)
-	}
+
 	ctx, cancel := context.WithCancel(context.Background())
-	go server.Serve(ctx)
+	go Publish(ctx, entry, service, nil)
 	t.Cleanup(cancel)
 	log.Printf("Published service: %s, type: %s", name, service)
 }
@@ -34,15 +31,10 @@ func TestQuickShutdown(t *testing.T) {
 		Instance: mdnsName,
 		Port:     mdnsPort,
 	}
-	server, err := Publish(entry, mdnsService, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer server.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	t0 := time.Now()
-	server.Serve(ctx)
+	Publish(ctx, entry, mdnsService, nil)
 	if time.Since(t0) > 500*time.Millisecond {
 		t.Fatal("shutdown took longer than 500ms")
 	}
