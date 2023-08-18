@@ -151,11 +151,10 @@ func (s *server) handleQuery(query *dns.Msg, ifIndex int, from net.Addr) (err er
 		resp.Authoritative = true
 		resp.Question = nil // RFC6762 Section 6: "responses MUST NOT contain any questions"
 
-		resp.Answer = answerTo(records, query.Answer, q)
+		resp.Answer, resp.Extra = answerTo(records, query.Answer, q)
 		if len(resp.Answer) == 0 {
 			continue
 		}
-		resp.Extra = extraRecords(records, resp.Answer)
 
 		if q.Qclass&qClassUnicastResponse != 0 {
 			err = s.conn.WriteUnicast(&resp, ifIndex, from)

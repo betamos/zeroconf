@@ -88,17 +88,7 @@ func isKnownAnswer(answer dns.RR, knowns []dns.RR) bool {
 	return false
 }
 
-// Returns the answers to a question and a known-answer list
-func answerTo(records, knowns []dns.RR, question dns.Question) (answers []dns.RR) {
-	for _, record := range records {
-		if isAnswerTo(record, question) && !isKnownAnswer(record, knowns) {
-			answers = append(answers, record)
-		}
-	}
-	return
-}
-
-// Returns any records that are considered additional to any answer where:
+// Returns answers and "extra records" that are considered additional to any answer where:
 //
 // (1) All SRV and TXT record(s) named in a PTR's rdata and
 // (2) All A and AAAA record(s) named in an SRV's rdata.
@@ -106,37 +96,33 @@ func answerTo(records, knowns []dns.RR, question dns.Question) (answers []dns.RR
 // This is transitive, such that a PTR answer "generates" all other record types.
 //
 // RFC6762 7.1. DNS Additional Record Generation.
-func extraRecords(records, answers []dns.RR) (extras []dns.RR) {
-ptrLoop:
+//
+// Note that if there is any answer, we return *all other records* as extras.
+// This is both allowed, simpler and has minimal overhead in practice.
+func answerTo(records, knowns []dns.RR, question dns.Question) (answers, extras []dns.RR) {
+
+	// Fast path without allocations, since many questions will be completely unrelated
+	hasAnswers := false
 	for _, record := range records {
-		recordHdr := record.Header()
-		if !(recordHdr.Rrtype == dns.TypeSRV || recordHdr.Rrtype == dns.TypeTXT) {
+		if isAnswerTo(record, question) {
+			hasAnswers = true
 			continue
-		}
-		for _, answer := range answers {
-			if ptr, ok := answer.(*dns.PTR); ok && ptr.Ptr == recordHdr.Name {
-				extras = append(extras, record)
-				continue ptrLoop
-			}
 		}
 	}
-	// Invariant: extras contain SRV and TXT records
+	if !hasAnswers {
+		return
+	}
 
-	// For transitivity, add the already generated records to the "search set"
-	answers = append(answers, extras...)
-
-srvLoop:
+	// Slow path, populate answers and extras
 	for _, record := range records {
-		recordHdr := record.Header()
-		if !(recordHdr.Rrtype == dns.TypeA || recordHdr.Rrtype == dns.TypeAAAA) {
-			continue
+		if isAnswerTo(record, question) && !isKnownAnswer(record, knowns) {
+			answers = append(answers, record)
+		} else {
+			extras = append(extras, record)
 		}
-		for _, answer := range answers {
-			if srv, ok := answer.(*dns.SRV); ok && srv.Target == recordHdr.Name {
-				extras = append(extras, record)
-				continue srvLoop
-			}
-		}
+	}
+	if len(answers) == 0 {
+		extras = nil
 	}
 	return
 }
