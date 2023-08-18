@@ -3,7 +3,6 @@ package zeroconf
 import (
 	"errors"
 	"fmt"
-	"log"
 	"maps"
 	"net"
 	"net/netip"
@@ -32,13 +31,6 @@ func (i *Interface) String() string {
 }
 
 // Client structure encapsulates both IPv4/IPv6 UDP connections.
-
-// Note: Replying should use the same iface/index, but this cannot be trusted fully.
-// First, there may be some cases where the index isn't provided (and thus, 0).
-// In those cases, we reply to all interfaces to be safe.
-// Secondly, experiments (on Linux w. ethernet and wifi) show that packets sent on
-// one interface may be received on two interfaces. Thus, we shouldn't use iface index
-// as a key or for deduplication.
 type dualConn struct {
 	c4     *conn4
 	c6     *conn6
@@ -151,9 +143,6 @@ func recvLoop(c conn, msgCh chan MsgMeta) error {
 		if err != nil {
 			return err
 		}
-		if ifIndex == 0 {
-			log.Printf("[ERR] zeroconf read: iface index 0, from %v\n", from)
-		}
 		msg := new(dns.Msg)
 		if err := msg.Unpack(buf[:n]); err != nil {
 			// log.Printf("[WARN] mdns: Failed to unpack packet: %v", err)
@@ -185,19 +174,18 @@ func (c *dualConn) WriteMulticast(msg *dns.Msg, ifIndex int, dst net.Addr) error
 	if err != nil {
 		return err
 	}
-	for _, iface := range c.ifaces {
-		if !(ifIndex == 0 || iface.Index == ifIndex) {
-			continue
-		}
-		ty := addrType(dst)
+	iface := c.ifaces[ifIndex]
+	if iface == nil {
+		return fmt.Errorf("iface with idx %v not found", ifIndex)
+	}
+	ty := addrType(dst)
 
-		// TODO: Log failures
-		if len(iface.v4) > 0 && (ty&IPv4) > 0 {
-			c.c4.WriteMulticast(buf, iface.Interface)
-		}
-		if len(iface.v6) > 0 && (ty&IPv6) > 0 {
-			c.c6.WriteMulticast(buf, iface.Interface)
-		}
+	// TODO: Log failures
+	if len(iface.v4) > 0 && (ty&IPv4) > 0 {
+		c.c4.WriteMulticast(buf, iface.Interface)
+	}
+	if len(iface.v6) > 0 && (ty&IPv6) > 0 {
+		c.c6.WriteMulticast(buf, iface.Interface)
 	}
 	return nil
 }

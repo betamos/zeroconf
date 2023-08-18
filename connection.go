@@ -50,7 +50,19 @@ type conn interface {
 
 type MsgMeta struct {
 	*dns.Msg
-	From    net.Addr
+	From net.Addr
+
+	// The index of the interface the message came from. Note this cannot be trusted fully:
+	//
+	// First, there may be some cases (Windows) where the index isn't provided (and thus, 0).
+	// In those cases, we reply to all interfaces to be safe.
+	//
+	// Secondly, experiments (on Linux w. ethernet and wifi) show that packets sent on
+	// one interface may be received on two interfaces. Thus, we shouldn't use iface index
+	// as a key or for deduplication.
+	//
+	// In short: If an index is non-zero, we reply on the same index. If zero, we
+	// must respond to all indices.
 	IfIndex int
 }
 

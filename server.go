@@ -125,18 +125,24 @@ func (s *server) recordsForIface(iface *Interface, unannounce bool) []dns.RR {
 	return recordsFromService(s.service, &entry, unannounce)
 }
 
-// handleQuery is used to handle an incoming query
-func (s *server) handleQuery(query *dns.Msg, ifIndex int, from net.Addr) (err error) {
-
+func (s *server) handleQuery(query *dns.Msg, ifIndex int, from net.Addr) error {
 	// RFC6762 Section 8.2: Probing messages are ignored, for now.
 	if len(query.Ns) > 0 || len(query.Question) == 0 {
 		return nil
 	}
-	// TODO: What if ifIndex is 0? Check windows.
-	iface := s.conn.ifaces[ifIndex]
-	if iface == nil {
-		return nil
+
+	// If we can't determine an interface source, we simply reply as if it were sent on all interfaces.
+	var errs []error
+	for _, iface := range s.conn.ifaces {
+		if ifIndex == 0 || ifIndex == iface.Index {
+			errs = append(errs, s.handleQueryForIface(query, iface, from))
+		}
 	}
+	return errors.Join(errs...)
+}
+
+// handleQuery is used to handle an incoming query
+func (s *server) handleQueryForIface(query *dns.Msg, iface *Interface, from net.Addr) (err error) {
 
 	// TODO: Cache these records in a iface idx -> records map
 	records := s.recordsForIface(iface, false)
@@ -158,9 +164,9 @@ func (s *server) handleQuery(query *dns.Msg, ifIndex int, from net.Addr) (err er
 		}
 
 		if q.Qclass&qClassUnicastResponse != 0 {
-			err = s.conn.WriteUnicast(&resp, ifIndex, from)
+			err = s.conn.WriteUnicast(&resp, iface.Index, from)
 		} else {
-			err = s.conn.WriteMulticast(&resp, ifIndex, from)
+			err = s.conn.WriteMulticast(&resp, iface.Index, from)
 		}
 	}
 
