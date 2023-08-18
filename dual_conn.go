@@ -32,6 +32,13 @@ func (i *Interface) String() string {
 }
 
 // Client structure encapsulates both IPv4/IPv6 UDP connections.
+
+// Note: Replying should use the same iface/index, but this cannot be trusted fully.
+// First, there may be some cases where the index isn't provided (and thus, 0).
+// In those cases, we reply to all interfaces to be safe.
+// Secondly, experiments (on Linux w. ethernet and wifi) show that packets sent on
+// one interface may be received on two interfaces. Thus, we shouldn't use iface index
+// as a key or for deduplication.
 type dualConn struct {
 	c4     *conn4
 	c6     *conn6

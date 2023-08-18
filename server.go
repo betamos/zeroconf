@@ -132,6 +132,7 @@ func (s *server) handleQuery(query *dns.Msg, ifIndex int, from net.Addr) (err er
 	if len(query.Ns) > 0 || len(query.Question) == 0 {
 		return nil
 	}
+	// TODO: What if ifIndex is 0? Check windows.
 	iface := s.conn.ifaces[ifIndex]
 	if iface == nil {
 		return nil

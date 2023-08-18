@@ -36,6 +36,7 @@ var (
 	}
 )
 
+// Shared ipv4 and ipv6 multicast ops.
 type conn interface {
 	JoinMulticast(net.Interface) error
 	ReadMulticast(buf []byte) (n int, from net.Addr, ifIndex int, err error)
