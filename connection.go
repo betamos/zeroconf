@@ -53,7 +53,7 @@ type conn interface {
 
 type MsgMeta struct {
 	*dns.Msg
-	From net.Addr
+	From netip.Addr
 
 	// The index of the interface the message came from. Note this cannot be trusted fully:
 	//
@@ -176,18 +176,4 @@ func (c *conn6) WriteUnicast(buf []byte, ifIndex int, addr net.Addr) (int, error
 
 func isMulticastInterface(iface net.Interface) bool {
 	return (iface.Flags&net.FlagUp) > 0 && (iface.Flags&net.FlagMulticast) > 0
-}
-
-func addrType(addr net.Addr) IPType {
-	if addr == nil {
-		return IPv4AndIPv6
-	}
-	ua := addr.(*net.UDPAddr)
-	if ua == nil {
-		return 0
-	}
-	if ua.IP.To4() != nil {
-		return IPv4
-	}
-	return IPv6
 }

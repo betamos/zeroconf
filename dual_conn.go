@@ -3,6 +3,7 @@ package zeroconf
 import (
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"net"
 	"net/netip"
@@ -143,33 +144,39 @@ func recvLoop(c conn, msgCh chan MsgMeta) error {
 		if err != nil {
 			return err
 		}
+		fromNetip := from.(*net.UDPAddr).AddrPort()
+		if fromNetip.Port() != mdnsPort {
+			log.Printf("[WARN] mdns: ignoring unexpected UDP msg from: %v", from)
+			continue
+		}
+
 		msg := new(dns.Msg)
 		if err := msg.Unpack(buf[:n]); err != nil {
 			// log.Printf("[WARN] mdns: Failed to unpack packet: %v", err)
 			continue
 		}
-		msgCh <- MsgMeta{msg, from, ifIndex}
+		msgCh <- MsgMeta{msg, fromNetip.Addr().Unmap(), ifIndex}
 	}
 }
 
-func (c *dualConn) WriteUnicast(msg *dns.Msg, ifIndex int, dst net.Addr) (err error) {
+func (c *dualConn) WriteUnicast(msg *dns.Msg, ifIndex int, dst netip.Addr) (err error) {
 	buf, err := msg.Pack()
 	if err != nil {
 		return err
 	}
-	ty := addrType(dst)
-	if c.c4 != nil && (ty&IPv4) > 0 {
-		_, err = c.c4.WriteUnicast(buf, ifIndex, dst)
-	} else if c.c6 != nil && (ty&IPv6) > 0 {
-		_, err = c.c6.WriteUnicast(buf, ifIndex, dst)
+	dstUdp := net.UDPAddrFromAddrPort(netip.AddrPortFrom(dst, mdnsPort))
+	if c.c4 != nil && dst.Is4() {
+		_, err = c.c4.WriteUnicast(buf, ifIndex, dstUdp)
+	} else if c.c6 != nil && dst.Is6() {
+		_, err = c.c6.WriteUnicast(buf, ifIndex, dstUdp)
 	} else {
 		err = fmt.Errorf("no suitable conn unicast msg: ifIndex=%v dst=%v", ifIndex, dst)
 	}
 	return
 }
 
-// Dst addr is only used for ipv4/ipv6 selection.
-func (c *dualConn) WriteMulticast(msg *dns.Msg, ifIndex int, dst net.Addr) error {
+// Dst addr is only used for ipv4/ipv6 selection. Use nil to write on both.
+func (c *dualConn) WriteMulticast(msg *dns.Msg, ifIndex int, dst *netip.Addr) (err error) {
 	buf, err := msg.Pack()
 	if err != nil {
 		return err
@@ -178,16 +185,18 @@ func (c *dualConn) WriteMulticast(msg *dns.Msg, ifIndex int, dst net.Addr) error
 	if iface == nil {
 		return fmt.Errorf("iface with idx %v not found", ifIndex)
 	}
-	ty := addrType(dst)
+	is4, is6 := true, true
+	if dst != nil {
+		is4, is6 = dst.Is4(), dst.Is6()
+	}
 
 	// TODO: Log failures
-	if len(iface.v4) > 0 && (ty&IPv4) > 0 {
-		c.c4.WriteMulticast(buf, iface.Interface)
+	if len(iface.v4) > 0 && is4 {
+		_, err = c.c4.WriteMulticast(buf, iface.Interface)
+	} else if len(iface.v6) > 0 && is6 {
+		_, err = c.c6.WriteMulticast(buf, iface.Interface)
 	}
-	if len(iface.v6) > 0 && (ty&IPv6) > 0 {
-		c.c6.WriteMulticast(buf, iface.Interface)
-	}
-	return nil
+	return err
 }
 
 func (c *dualConn) SetDeadline(dl time.Time) error {

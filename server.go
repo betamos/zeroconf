@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
+	"net/netip"
 	"os"
 	"sync"
 	"time"
@@ -106,7 +106,7 @@ func (s *server) recv(ctx context.Context) {
 			if !ok {
 				return
 			}
-			_ = s.handleQuery(msg.Msg, msg.IfIndex, msg.From)
+			_ = s.handleQuery(msg)
 		}
 	}
 }
@@ -125,24 +125,24 @@ func (s *server) recordsForIface(iface *Interface, unannounce bool) []dns.RR {
 	return recordsFromService(s.service, &entry, unannounce)
 }
 
-func (s *server) handleQuery(query *dns.Msg, ifIndex int, from net.Addr) error {
+func (s *server) handleQuery(msg MsgMeta) error {
 	// RFC6762 Section 8.2: Probing messages are ignored, for now.
-	if len(query.Ns) > 0 || len(query.Question) == 0 {
+	if len(msg.Ns) > 0 || len(msg.Question) == 0 {
 		return nil
 	}
 
 	// If we can't determine an interface source, we simply reply as if it were sent on all interfaces.
 	var errs []error
 	for _, iface := range s.conn.ifaces {
-		if ifIndex == 0 || ifIndex == iface.Index {
-			errs = append(errs, s.handleQueryForIface(query, iface, from))
+		if msg.IfIndex == 0 || msg.IfIndex == iface.Index {
+			errs = append(errs, s.handleQueryForIface(msg.Msg, iface, msg.From))
 		}
 	}
 	return errors.Join(errs...)
 }
 
 // handleQuery is used to handle an incoming query
-func (s *server) handleQueryForIface(query *dns.Msg, iface *Interface, from net.Addr) (err error) {
+func (s *server) handleQueryForIface(query *dns.Msg, iface *Interface, from netip.Addr) (err error) {
 
 	// TODO: Cache these records in a iface idx -> records map
 	records := s.recordsForIface(iface, false)
@@ -166,7 +166,7 @@ func (s *server) handleQueryForIface(query *dns.Msg, iface *Interface, from net.
 		if q.Qclass&qClassUnicastResponse != 0 {
 			err = s.conn.WriteUnicast(&resp, iface.Index, from)
 		} else {
-			err = s.conn.WriteMulticast(&resp, iface.Index, from)
+			err = s.conn.WriteMulticast(&resp, iface.Index, &from)
 		}
 	}
 
