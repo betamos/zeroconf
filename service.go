@@ -11,9 +11,9 @@ import (
 	"github.com/miekg/dns"
 )
 
-// ServiceRecord contains the basic description of a service.
+// Service contains the basic description of a service.
 // It is used both in responding and enumerating.
-type ServiceRecord struct {
+type Service struct {
 
 	// Service name, e.g. "_http._tcp"
 	Type string `json:"type"`
@@ -26,11 +26,11 @@ type ServiceRecord struct {
 	Domain string `json:"domain"`
 }
 
-// Takes a service string on the form _type._proto(.domain)? and turns it into a service record.
+// Takes a service string on the form _type._proto(.domain)? and turns it into a service.
 // Should be validated afterwards.
-func parseService(service string) *ServiceRecord {
+func parseService(service string) *Service {
 	typeParts := strings.Split(service, ",")
-	s := &ServiceRecord{
+	s := &Service{
 		Type:     typeParts[0],
 		Subtypes: typeParts[1:],
 	}
@@ -45,11 +45,11 @@ func parseService(service string) *ServiceRecord {
 }
 
 // Equality *without* subtypes
-func (s *ServiceRecord) Equal(o *ServiceRecord) bool {
+func (s *Service) Equal(o *Service) bool {
 	return s.Type == o.Type && s.Domain == o.Domain
 }
 
-func (s *ServiceRecord) normalize() {
+func (s *Service) normalize() {
 	s.Type = strings.ToLower(s.Type)
 	s.Domain = strings.ToLower(s.Domain)
 	for i, subtype := range s.Subtypes {
@@ -59,7 +59,7 @@ func (s *ServiceRecord) normalize() {
 	slices.Compact(s.Subtypes)
 }
 
-func (s *ServiceRecord) Validate() error {
+func (s *Service) Validate() error {
 	s.normalize()
 	if labels, ok := dns.IsDomainName(s.Type); !ok || labels != 2 {
 		return fmt.Errorf("invalid service [%s] needs to be dot-separated", s.Type)
@@ -83,7 +83,7 @@ func (s *ServiceRecord) Validate() error {
 // Format:
 // <instance>.<service>.<domain>.
 // <instance>._sub.<subtype>.<service>.<domain>.
-func (s *ServiceRecord) responderNames() (types []string) {
+func (s *Service) responderNames() (types []string) {
 	types = append(types, fmt.Sprintf("%s.%s.", s.Type, s.Domain))
 	for _, sub := range s.Subtypes {
 		types = append(types, fmt.Sprintf("%s._sub.%s.%s.", sub, s.Type, s.Domain))
@@ -93,7 +93,7 @@ func (s *ServiceRecord) responderNames() (types []string) {
 
 // Returns the query DNS name to use in e.g. a PTR query, and whether the query is a instance
 // resolve query or not.
-func (s *ServiceRecord) queryName() (str string) {
+func (s *Service) queryName() (str string) {
 	if len(s.Subtypes) > 0 {
 		return fmt.Sprintf("%s._sub.%s.%s.", s.Subtypes[0], s.Type, s.Domain)
 	} else {
@@ -103,12 +103,12 @@ func (s *ServiceRecord) queryName() (str string) {
 
 // Returns a complete service instance path, e.g. `MyDemo\ Service._foobar._tcp.local.`,
 // which is composed from service instance name, service name and a domain.
-func instancePath(s *ServiceRecord, e *ServiceEntry) string {
+func instancePath(s *Service, e *ServiceEntry) string {
 	return fmt.Sprintf("%s.%s.%s.", e.escapeInstance(), s.Type, s.Domain)
 }
 
 // Parse an instance path
-func parseInstancePath(s string) (service *ServiceRecord, instance string, err error) {
+func parseInstancePath(s string) (service *Service, instance string, err error) {
 	parts := dns.SplitDomainName(s)
 	// ["_sub", subtype, ...]
 	var subtypes []string
@@ -120,7 +120,7 @@ func parseInstancePath(s string) (service *ServiceRecord, instance string, err e
 	instance = unescapeDns(parts[0])
 	ty := fmt.Sprintf("%s.%s", parts[1], parts[2])
 	domain := strings.Join(parts[3:], ".")
-	service = &ServiceRecord{ty, subtypes, domain}
+	service = &Service{ty, subtypes, domain}
 	if err := service.Validate(); err != nil {
 		return nil, "", err
 	}

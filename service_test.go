@@ -143,7 +143,7 @@ func TestParseInstancePath(t *testing.T) {
 }
 
 func TestQueryName(t *testing.T) {
-	s := &ServiceRecord{
+	s := &Service{
 		Type:     "_service._tcp",
 		Subtypes: []string{"_printer"},
 		Domain:   "local",

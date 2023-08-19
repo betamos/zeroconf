@@ -129,7 +129,7 @@ func answerTo(records, knowns []dns.RR, question dns.Question) (answers, extras 
 
 // Return a single service entry from the msg that matches the "search record" provided.
 // Typically, the search record is a "browsing" record for a service (i.e. no instance).
-func serviceFromRecords(msg *dns.Msg, search *ServiceRecord) (entries []*ServiceEntry) {
+func serviceFromRecords(msg *dns.Msg, search *Service) (entries []*ServiceEntry) {
 	// TODO: Support meta-queries
 	var (
 		answers  = append(msg.Answer, msg.Extra...)
@@ -201,7 +201,7 @@ func serviceFromRecords(msg *dns.Msg, search *ServiceRecord) (entries []*Service
 	return
 }
 
-func recordsFromService(service *ServiceRecord, entry *ServiceEntry, unannounce bool) (records []dns.RR) {
+func recordsFromService(service *Service, entry *ServiceEntry, unannounce bool) (records []dns.RR) {
 
 	// RFC6762 Section 10: Records referencing a hostname (SRV/A/AAAA) SHOULD use TTL of 120 s,
 	// to account for network interface and IP address changes, while others should be 75 min.

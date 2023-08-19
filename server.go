@@ -63,7 +63,7 @@ func Publish(ctx context.Context, entry *ServiceEntry, serviceType string, conf 
 
 // Server structure encapsulates both IPv4/IPv6 UDP connections
 type server struct {
-	service *ServiceRecord
+	service *Service
 	entry   *ServiceEntry
 	conn    *dualConn
 }

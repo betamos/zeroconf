@@ -27,7 +27,7 @@ const (
 type client struct {
 	conn *dualConn
 
-	service *ServiceRecord
+	service *Service
 	cache   *cache
 }
 
