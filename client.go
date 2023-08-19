@@ -3,6 +3,7 @@ package zeroconf
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"math/rand"
 	"time"
 
@@ -121,6 +122,7 @@ func (c *client) mainloop(ctx context.Context) error {
 		c.cache.Advance(now)
 
 		for _, entry := range entries {
+			// TODO: Debug log when no events are emitted
 			c.cache.Put(entry)
 		}
 		clear(entries)
@@ -150,7 +152,10 @@ func (c *client) query() error {
 
 	var errs []error
 	for _, iface := range c.conn.ifaces {
-		errs = append(errs, c.conn.WriteMulticast(m, iface.Index, nil))
+		err := c.conn.WriteMulticast(m, iface.Index, nil)
+		slog.Debug("query", "iface", iface.Name, "err", err)
+		errs = append(errs, err)
 	}
+
 	return errors.Join(errs...)
 }

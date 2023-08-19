@@ -107,9 +107,7 @@ func (s *server) recv(ctx context.Context) {
 			if !ok {
 				return
 			}
-			if err := s.handleQuery(msg); err != nil {
-				slog.Debug("responding failed", "err", err)
-			}
+			_ = s.handleQuery(msg)
 		}
 	}
 }
@@ -147,7 +145,7 @@ func (s *server) handleQuery(msg MsgMeta) error {
 }
 
 // handleQuery is used to handle an incoming query
-func (s *server) handleQueryForIface(query *dns.Msg, iface *Interface, from netip.Addr) (err error) {
+func (s *server) handleQueryForIface(query *dns.Msg, iface *Interface, src netip.Addr) (err error) {
 
 	// TODO: Cache these records in a iface idx -> records map
 	records := s.recordsForIface(iface, false)
@@ -168,11 +166,13 @@ func (s *server) handleQueryForIface(query *dns.Msg, iface *Interface, from neti
 			continue
 		}
 
-		if q.Qclass&qClassUnicastResponse != 0 {
-			err = s.conn.WriteUnicast(&resp, iface.Index, from)
+		isUnicast := q.Qclass&qClassUnicastResponse != 0
+		if isUnicast {
+			err = s.conn.WriteUnicast(&resp, iface.Index, src)
 		} else {
-			err = s.conn.WriteMulticast(&resp, iface.Index, &from)
+			err = s.conn.WriteMulticast(&resp, iface.Index, &src)
 		}
+		slog.Debug("respond", "iface", iface.Name, "src", src, "unicast", isUnicast, "err", err)
 	}
 
 	return err
@@ -191,9 +191,7 @@ func (s *server) announce(ctx context.Context) error {
 
 	timeout := time.Second
 	for i := 0; i < announceCount; i++ {
-		if err := s.broadcastRecords(false); err != nil {
-			slog.Debug("announcement failed", "err", err)
-		}
+		_ = s.broadcastRecords(false)
 		if err := sleepContext(ctx, timeout); err != nil {
 			return err
 		}
@@ -211,7 +209,9 @@ func (s *server) broadcastRecords(unannounce bool) error {
 		resp.MsgHdr.Authoritative = true
 		resp.Compress = true
 		resp.Answer = s.recordsForIface(iface, unannounce)
-		errs = append(errs, s.conn.WriteMulticast(resp, iface.Index, nil))
+		err := s.conn.WriteMulticast(resp, iface.Index, nil)
+		errs = append(errs, err)
+		slog.Debug("broadcast", "iface", iface.Name, "goodbye", unannounce, "err", err)
 	}
 	return errors.Join(errs...)
 }
