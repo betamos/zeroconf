@@ -140,13 +140,13 @@ func (c *dualConn) RunReader(msgCh chan MsgMeta) error {
 func recvLoop(c conn, msgCh chan MsgMeta) error {
 	buf := make([]byte, 65536)
 	for {
-		n, from, ifIndex, err := c.ReadMulticast(buf)
+		n, src, ifIndex, err := c.ReadMulticast(buf)
 		if err != nil {
 			return err
 		}
-		fromNetip := from.(*net.UDPAddr).AddrPort()
-		if fromNetip.Port() != mdnsPort {
-			slog.Warn("ignoring unexpected UDP msg", "src", from)
+		srcNetip := src.(*net.UDPAddr).AddrPort()
+		if srcNetip.Port() != mdnsPort {
+			slog.Warn("ignoring unexpected UDP msg", "src", src)
 			continue
 		}
 
@@ -155,7 +155,7 @@ func recvLoop(c conn, msgCh chan MsgMeta) error {
 			// log.Printf("[WARN] mdns: Failed to unpack packet: %v", err)
 			continue
 		}
-		msgCh <- MsgMeta{msg, fromNetip.Addr().Unmap(), ifIndex}
+		msgCh <- MsgMeta{msg, srcNetip.Addr().Unmap(), ifIndex}
 	}
 }
 

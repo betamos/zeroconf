@@ -138,7 +138,7 @@ func (s *server) handleQuery(msg MsgMeta) error {
 	var errs []error
 	for _, iface := range s.conn.ifaces {
 		if msg.IfIndex == 0 || msg.IfIndex == iface.Index {
-			if err := s.handleQueryForIface(msg.Msg, iface, msg.From); err != nil {
+			if err := s.handleQueryForIface(msg.Msg, iface, msg.Src); err != nil {
 				errs = append(errs, fmt.Errorf("%v %w", iface.Name, err))
 			}
 		}

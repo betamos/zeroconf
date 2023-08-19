@@ -42,7 +42,7 @@ var (
 // Shared ipv4 and ipv6 multicast ops.
 type conn interface {
 	JoinMulticast(net.Interface) error
-	ReadMulticast(buf []byte) (n int, from net.Addr, ifIndex int, err error)
+	ReadMulticast(buf []byte) (n int, src net.Addr, ifIndex int, err error)
 	WriteMulticast(buf []byte, iface net.Interface) (n int, err error)
 	WriteUnicast(buf []byte, ifIndex int, addr net.Addr) (n int, err error)
 	SetReadDeadline(time.Time) error
@@ -53,7 +53,7 @@ type conn interface {
 
 type MsgMeta struct {
 	*dns.Msg
-	From netip.Addr
+	Src netip.Addr
 
 	// The index of the interface the message came from. Note this cannot be trusted fully:
 	//
@@ -92,9 +92,9 @@ func (c *conn4) JoinMulticast(iface net.Interface) (err error) {
 	return c.JoinGroup(&iface, &net.UDPAddr{IP: mdnsGroupIPv4})
 }
 
-func (c *conn4) ReadMulticast(buf []byte) (n int, from net.Addr, ifIndex int, err error) {
+func (c *conn4) ReadMulticast(buf []byte) (n int, src net.Addr, ifIndex int, err error) {
 	var cm *ipv4.ControlMessage
-	n, cm, from, err = c.ReadFrom(buf)
+	n, cm, src, err = c.ReadFrom(buf)
 	if cm != nil {
 		ifIndex = cm.IfIndex
 	}
@@ -144,9 +144,9 @@ func (c *conn6) JoinMulticast(iface net.Interface) (err error) {
 	return c.JoinGroup(&iface, &net.UDPAddr{IP: mdnsGroupIPv6})
 }
 
-func (c *conn6) ReadMulticast(buf []byte) (n int, from net.Addr, ifIndex int, err error) {
+func (c *conn6) ReadMulticast(buf []byte) (n int, src net.Addr, ifIndex int, err error) {
 	var cm *ipv6.ControlMessage
-	n, cm, from, err = c.ReadFrom(buf)
+	n, cm, src, err = c.ReadFrom(buf)
 	if cm != nil {
 		ifIndex = cm.IfIndex
 	}
