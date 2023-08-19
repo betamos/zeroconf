@@ -3,7 +3,7 @@ package zeroconf
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"maps"
 	"net"
 	"net/netip"
@@ -146,7 +146,7 @@ func recvLoop(c conn, msgCh chan MsgMeta) error {
 		}
 		fromNetip := from.(*net.UDPAddr).AddrPort()
 		if fromNetip.Port() != mdnsPort {
-			log.Printf("[WARN] mdns: ignoring unexpected UDP msg from: %v", from)
+			slog.Warn("ignoring unexpected UDP msg", "src", from)
 			continue
 		}
 

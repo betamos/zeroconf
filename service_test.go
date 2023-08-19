@@ -2,7 +2,6 @@ package zeroconf
 
 import (
 	"context"
-	"log"
 	"testing"
 	"time"
 )
@@ -23,7 +22,6 @@ func startMDNS(t *testing.T, port uint16, name, service string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go Publish(ctx, entry, service, nil)
 	t.Cleanup(cancel)
-	log.Printf("Published service: %s, type: %s", name, service)
 }
 
 func TestQuickShutdown(t *testing.T) {

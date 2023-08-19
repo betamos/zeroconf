@@ -24,6 +24,7 @@ var (
 
 func main() {
 	flag.Parse()
+	log.SetFlags(log.Ltime)
 
 	entry := &zeroconf.ServiceEntry{
 		Instance: *name,
@@ -43,7 +44,6 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	err := zeroconf.Publish(ctx, entry, *service, nil)
-	log.Println("server closed", err)
+	_ = zeroconf.Publish(ctx, entry, *service, nil)
 
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/netip"
 	"os"
 	"sync"
@@ -90,7 +90,8 @@ func (s *server) serve(ctx context.Context) error {
 	wg.Wait()
 
 	s.conn.SetWriteDeadline(now.Add(10 * time.Millisecond))
-	return errors.Join(context.Cause(ctx), s.unregister())
+	err := s.broadcastRecords(true) // unregister
+	return errors.Join(context.Cause(ctx), err)
 }
 
 // recv4 is a long running routine to receive packets from an interface
@@ -106,7 +107,9 @@ func (s *server) recv(ctx context.Context) {
 			if !ok {
 				return
 			}
-			_ = s.handleQuery(msg)
+			if err := s.handleQuery(msg); err != nil {
+				slog.Debug("responding failed", "err", err)
+			}
 		}
 	}
 }
@@ -135,7 +138,9 @@ func (s *server) handleQuery(msg MsgMeta) error {
 	var errs []error
 	for _, iface := range s.conn.ifaces {
 		if msg.IfIndex == 0 || msg.IfIndex == iface.Index {
-			errs = append(errs, s.handleQueryForIface(msg.Msg, iface, msg.From))
+			if err := s.handleQueryForIface(msg.Msg, iface, msg.From); err != nil {
+				errs = append(errs, fmt.Errorf("%v %w", iface.Name, err))
+			}
 		}
 	}
 	return errors.Join(errs...)
@@ -186,17 +191,8 @@ func (s *server) announce(ctx context.Context) error {
 
 	timeout := time.Second
 	for i := 0; i < announceCount; i++ {
-		for _, iface := range s.conn.ifaces {
-
-			resp := new(dns.Msg)
-			resp.MsgHdr.Response = true
-			resp.MsgHdr.Authoritative = true
-			resp.Compress = true
-
-			resp.Answer = s.recordsForIface(iface, false)
-			if err := s.conn.WriteMulticast(resp, iface.Index, nil); err != nil {
-				log.Printf("[ERR] zeroconf: failed to send announcement: %v\n", err)
-			}
+		if err := s.broadcastRecords(false); err != nil {
+			slog.Debug("announcement failed", "err", err)
 		}
 		if err := sleepContext(ctx, timeout); err != nil {
 			return err
@@ -206,16 +202,16 @@ func (s *server) announce(ctx context.Context) error {
 	return nil
 }
 
-func (s *server) unregister() error {
-
+// Broadcast all records to all interfaces. If unannounce is set, the TTLs are zero
+func (s *server) broadcastRecords(unannounce bool) error {
+	var errs []error
 	for _, iface := range s.conn.ifaces {
 		resp := new(dns.Msg)
 		resp.MsgHdr.Response = true
+		resp.MsgHdr.Authoritative = true
 		resp.Compress = true
-		resp.Answer = s.recordsForIface(iface, true)
-		if err := s.conn.WriteMulticast(resp, iface.Index, nil); err != nil {
-			log.Printf("[ERR] zeroconf: failed to send unannouncement: %v\n", err)
-		}
+		resp.Answer = s.recordsForIface(iface, unannounce)
+		errs = append(errs, s.conn.WriteMulticast(resp, iface.Index, nil))
 	}
-	return nil
+	return errors.Join(errs...)
 }

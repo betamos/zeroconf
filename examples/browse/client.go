@@ -19,6 +19,7 @@ var (
 
 func main() {
 	flag.Parse()
+	log.SetFlags(log.Ltime)
 
 	conf := &zeroconf.Config{
 		MaxAge: time.Duration(*maxAge) * time.Second,
@@ -30,10 +31,7 @@ func main() {
 	log.Printf("browsing for [%v]\n", *service)
 
 	// Discover all services on the network (e.g. _workstation._tcp)
-	err := zeroconf.Browse(ctx, *service, func(event zeroconf.Event) {
+	_ = zeroconf.Browse(ctx, *service, func(event zeroconf.Event) {
 		log.Println(event, event.Addrs)
 	}, conf)
-	if err != nil {
-		log.Println("browse done:", err)
-	}
 }
