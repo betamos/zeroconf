@@ -2,6 +2,7 @@ package zeroconf
 
 import (
 	"net"
+	"net/netip"
 	"runtime"
 	"time"
 
@@ -9,6 +10,8 @@ import (
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 )
+
+const mdnsPort = 5353
 
 var (
 	// Multicast groups used by mDNS
@@ -18,21 +21,21 @@ var (
 	// mDNS wildcard addresses
 	mdnsWildcardAddrIPv4 = &net.UDPAddr{
 		IP:   net.ParseIP("224.0.0.0"),
-		Port: 5353,
+		Port: mdnsPort,
 	}
 	mdnsWildcardAddrIPv6 = &net.UDPAddr{
 		IP:   net.ParseIP("ff02::"),
-		Port: 5353,
+		Port: mdnsPort,
 	}
 
 	// mDNS endpoint addresses
 	ipv4Addr = &net.UDPAddr{
 		IP:   mdnsGroupIPv4,
-		Port: 5353,
+		Port: mdnsPort,
 	}
 	ipv6Addr = &net.UDPAddr{
 		IP:   mdnsGroupIPv6,
-		Port: 5353,
+		Port: mdnsPort,
 	}
 )
 

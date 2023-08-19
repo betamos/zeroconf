@@ -8,10 +8,10 @@ import (
 )
 
 var (
-	mdnsName           = "test--xxxxxxxxxxxx"
-	mdnsService        = "_test--xxxx._tcp"
-	mdnsSubtype        = "_test--xxxx._tcp,_fancy"
-	mdnsPort    uint16 = 8888
+	testName                      = "test--xxxxxxxxxxxx"
+	testService                   = "_test--xxxx._tcp"
+	testServiceWithSubtype        = "_test--xxxx._tcp,_fancy"
+	testPort               uint16 = 8888
 )
 
 func startMDNS(t *testing.T, port uint16, name, service string) {
@@ -28,13 +28,13 @@ func startMDNS(t *testing.T, port uint16, name, service string) {
 
 func TestQuickShutdown(t *testing.T) {
 	entry := &ServiceEntry{
-		Instance: mdnsName,
-		Port:     mdnsPort,
+		Instance: testName,
+		Port:     testPort,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	t0 := time.Now()
-	Publish(ctx, entry, mdnsService, nil)
+	Publish(ctx, entry, testService, nil)
 	if time.Since(t0) > 500*time.Millisecond {
 		t.Fatal("shutdown took longer than 500ms")
 	}
@@ -43,10 +43,10 @@ func TestQuickShutdown(t *testing.T) {
 func TestBasic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	startMDNS(t, mdnsPort, mdnsName, mdnsService)
+	startMDNS(t, testPort, testName, testService)
 
 	entries := make([]Event, 0)
-	Browse(ctx, mdnsService, func(e Event) {
+	Browse(ctx, testService, func(e Event) {
 		entries = append(entries, e)
 	}, nil)
 	<-ctx.Done()
@@ -55,11 +55,11 @@ func TestBasic(t *testing.T) {
 		t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 	}
 	result := entries[0]
-	if result.Instance != mdnsName {
-		t.Fatalf("Expected instance is %s, but got %s", mdnsName, result.Instance)
+	if result.Instance != testName {
+		t.Fatalf("Expected instance is %s, but got %s", testName, result.Instance)
 	}
-	if result.Port != mdnsPort {
-		t.Fatalf("Expected port is %d, but got %d", mdnsPort, result.Port)
+	if result.Port != testPort {
+		t.Fatalf("Expected port is %d, but got %d", testPort, result.Port)
 	}
 }
 
@@ -68,7 +68,7 @@ func TestNoPublish(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	entries := make([]Event, 0)
-	Browse(ctx, mdnsService, func(e Event) {
+	Browse(ctx, testService, func(e Event) {
 		entries = append(entries, e)
 	}, nil)
 	<-ctx.Done()
@@ -83,10 +83,10 @@ func TestSubtype(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype)
+		startMDNS(t, testPort, testName, testServiceWithSubtype)
 
 		entries := make([]Event, 0)
-		Browse(ctx, mdnsService, func(e Event) {
+		Browse(ctx, testService, func(e Event) {
 			entries = append(entries, e)
 		}, nil)
 		<-ctx.Done()
@@ -95,11 +95,11 @@ func TestSubtype(t *testing.T) {
 			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 		}
 		result := entries[0]
-		if result.Instance != mdnsName {
-			t.Fatalf("Expected instance is %s, but got %s", mdnsName, result.Instance)
+		if result.Instance != testName {
+			t.Fatalf("Expected instance is %s, but got %s", testName, result.Instance)
 		}
-		if result.Port != mdnsPort {
-			t.Fatalf("Expected port is %d, but got %d", mdnsPort, result.Port)
+		if result.Port != testPort {
+			t.Fatalf("Expected port is %d, but got %d", testPort, result.Port)
 		}
 	})
 
@@ -107,10 +107,10 @@ func TestSubtype(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		startMDNS(t, mdnsPort, mdnsName, mdnsSubtype)
+		startMDNS(t, testPort, testName, testServiceWithSubtype)
 
 		entries := make([]Event, 0)
-		Browse(ctx, mdnsService, func(e Event) {
+		Browse(ctx, testService, func(e Event) {
 			entries = append(entries, e)
 		}, nil)
 		<-ctx.Done()
@@ -119,11 +119,11 @@ func TestSubtype(t *testing.T) {
 			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 		}
 		result := entries[0]
-		if result.Instance != mdnsName {
-			t.Fatalf("Expected instance is %s, but got %s", mdnsName, result.Instance)
+		if result.Instance != testName {
+			t.Fatalf("Expected instance is %s, but got %s", testName, result.Instance)
 		}
-		if result.Port != mdnsPort {
-			t.Fatalf("Expected port is %d, but got %d", mdnsPort, result.Port)
+		if result.Port != testPort {
+			t.Fatalf("Expected port is %d, but got %d", testPort, result.Port)
 		}
 	})
 }
