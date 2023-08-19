@@ -21,7 +21,7 @@ const (
 
 var defaultHostname, _ = os.Hostname()
 
-// Publish a service entry. Instance and Port are required, while Text is optional.
+// Publish a service entry. Name and Port are required, while Text is optional.
 // Addrs and Hostname are determined automatically, but can be overriden.
 //
 // Service type should be on the form `_my-service._tcp` or `_my-service._udp`

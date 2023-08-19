@@ -104,7 +104,7 @@ func (s *Service) queryName() (str string) {
 // Returns a complete service instance path, e.g. `MyDemo\ Service._foobar._tcp.local.`,
 // which is composed from service instance name, service name and a domain.
 func instancePath(s *Service, e *ServiceEntry) string {
-	return fmt.Sprintf("%s.%s.%s.", e.escapeInstance(), s.Type, s.Domain)
+	return fmt.Sprintf("%s.%s.%s.", e.escapeName(), s.Type, s.Domain)
 }
 
 // Parse an instance path
@@ -132,7 +132,7 @@ func parseInstancePath(s string) (service *Service, instance string, err error) 
 // used to answer multicast queries.
 type ServiceEntry struct {
 	// Instance name, e.g. `Mr. Office Printer`  (avoid backslash)
-	Instance string `json:"name"`
+	Name string `json:"name"`
 
 	// Port number, must be positive
 	Port uint16 `json:"port"`
@@ -152,7 +152,7 @@ type ServiceEntry struct {
 }
 
 func (s *ServiceEntry) String() string {
-	return fmt.Sprintf("%v (%v)", s.Instance, s.Hostname)
+	return fmt.Sprintf("%v (%v)", s.Name, s.Hostname)
 }
 
 func (s *ServiceEntry) Validate() error {
@@ -182,6 +182,6 @@ func (s *ServiceEntry) Equal(o *ServiceEntry) bool {
 
 // RFC 6763 Section 4.3: [...] the <Instance> portion is allowed to contain any characters
 // Spaces and backslashes are escaped by "github.com/miekg/dns".
-func (s *ServiceEntry) escapeInstance() string {
-	return strings.ReplaceAll(s.Instance, ".", "\\.")
+func (s *ServiceEntry) escapeName() string {
+	return strings.ReplaceAll(s.Name, ".", "\\.")
 }

@@ -52,9 +52,9 @@ func main() {
 	var err error
 	if *publish {
 		entry := &zeroconf.ServiceEntry{
-			Instance: *name,
-			Port:     uint16(*port),
-			Text:     []string{"txtv=0", "lo=1", "la=2"},
+			Name: *name,
+			Port: uint16(*port),
+			Text: []string{"txtv=0", "lo=1", "la=2"},
 
 			Hostname: *hostname,
 		}

@@ -15,8 +15,8 @@ var (
 
 func startMDNS(t *testing.T, port uint16, name, service string) {
 	entry := &ServiceEntry{
-		Instance: name,
-		Port:     port,
+		Name: name,
+		Port: port,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -26,8 +26,8 @@ func startMDNS(t *testing.T, port uint16, name, service string) {
 
 func TestQuickShutdown(t *testing.T) {
 	entry := &ServiceEntry{
-		Instance: testName,
-		Port:     testPort,
+		Name: testName,
+		Port: testPort,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -53,8 +53,8 @@ func TestBasic(t *testing.T) {
 		t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 	}
 	result := entries[0]
-	if result.Instance != testName {
-		t.Fatalf("Expected instance is %s, but got %s", testName, result.Instance)
+	if result.Name != testName {
+		t.Fatalf("Expected instance is %s, but got %s", testName, result.Name)
 	}
 	if result.Port != testPort {
 		t.Fatalf("Expected port is %d, but got %d", testPort, result.Port)
@@ -93,8 +93,8 @@ func TestSubtype(t *testing.T) {
 			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 		}
 		result := entries[0]
-		if result.Instance != testName {
-			t.Fatalf("Expected instance is %s, but got %s", testName, result.Instance)
+		if result.Name != testName {
+			t.Fatalf("Expected instance is %s, but got %s", testName, result.Name)
 		}
 		if result.Port != testPort {
 			t.Fatalf("Expected port is %d, but got %d", testPort, result.Port)
@@ -117,8 +117,8 @@ func TestSubtype(t *testing.T) {
 			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
 		}
 		result := entries[0]
-		if result.Instance != testName {
-			t.Fatalf("Expected instance is %s, but got %s", testName, result.Instance)
+		if result.Name != testName {
+			t.Fatalf("Expected instance is %s, but got %s", testName, result.Name)
 		}
 		if result.Port != testPort {
 			t.Fatalf("Expected port is %d, but got %d", testPort, result.Port)

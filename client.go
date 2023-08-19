@@ -63,10 +63,10 @@ func Browse(ctx context.Context, serviceStr string, cb func(Event), conf *Config
 }
 
 // Lookup a specific instance of a service.
-func Lookup(ctx context.Context, instance, service string, conf *Config) (entry *ServiceEntry, err error) {
+func Lookup(ctx context.Context, instanceName, service string, conf *Config) (entry *ServiceEntry, err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	err = Browse(ctx, service, func(event Event) {
-		if event.Op == OpAdded && instance == event.Instance {
+		if event.Op == OpAdded && instanceName == event.Name {
 			entry = event.ServiceEntry
 			cancel()
 		}

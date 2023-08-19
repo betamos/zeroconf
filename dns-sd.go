@@ -152,10 +152,9 @@ func serviceFromRecords(msg *dns.Msg, search *Service) (entries []*ServiceEntry)
 			}
 
 			// pointer to instance path, e.g. `My Printer._http._tcp.`
-			record, instance, err := parseInstancePath(rr.Ptr)
-			if err == nil && search.Equal(record) {
-
-				m[rr.Ptr] = &ServiceEntry{Instance: instance}
+			service, instanceName, err := parseInstancePath(rr.Ptr)
+			if err == nil && search.Equal(service) {
+				m[rr.Ptr] = &ServiceEntry{Name: instanceName}
 			}
 
 		// Phase 2: populate other fields

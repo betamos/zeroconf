@@ -92,7 +92,7 @@ func (c *cache) Advance(now time.Time) {
 }
 
 func (c *cache) Put(entry *ServiceEntry) {
-	k := entry.Instance
+	k := entry.Name
 	entry.seenAt = c.now
 	if entry.ttl == 0 {
 		// Existing entry removed through a "Goodbye Packet"
