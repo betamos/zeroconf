@@ -189,14 +189,14 @@ func (c *dualConn) WriteMulticast(msg *dns.Msg, ifIndex int, dst *netip.Addr) (e
 	if dst != nil {
 		is4, is6 = dst.Is4(), dst.Is6()
 	}
-
-	// TODO: Log failures
+	var err4, err6 error
 	if len(iface.v4) > 0 && is4 {
-		_, err = c.c4.WriteMulticast(buf, iface.Interface)
-	} else if len(iface.v6) > 0 && is6 {
-		_, err = c.c6.WriteMulticast(buf, iface.Interface)
+		_, err4 = c.c4.WriteMulticast(buf, iface.Interface)
 	}
-	return err
+	if len(iface.v6) > 0 && is6 {
+		_, err6 = c.c6.WriteMulticast(buf, iface.Interface)
+	}
+	return errors.Join(err4, err6)
 }
 
 func (c *dualConn) SetDeadline(dl time.Time) error {
