@@ -151,6 +151,7 @@ func (c *client) query() error {
 
 	var errs []error
 	for _, iface := range c.conn.ifaces {
+		c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 		err := c.conn.WriteMulticast(m, iface.Index, nil)
 		slog.Debug("query", "iface", iface.Name, "err", err)
 		errs = append(errs, err)

@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const writeTimeout = 10 * time.Millisecond
+
 type Config struct {
 	// Interfaces to use for mDNS, net.Interfaces by default. Interfaces that don't support
 	// multicast are filtered out.

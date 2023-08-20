@@ -89,7 +89,6 @@ func (s *server) serve(ctx context.Context) error {
 	s.conn.SetDeadline(now)
 	wg.Wait()
 
-	s.conn.SetWriteDeadline(now.Add(10 * time.Millisecond))
 	err := s.broadcastRecords(true) // unregister
 	return errors.Join(context.Cause(ctx), err)
 }
@@ -166,6 +165,7 @@ func (s *server) handleQueryForIface(query *dns.Msg, iface *Interface, src netip
 			continue
 		}
 
+		s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 		isUnicast := q.Qclass&qClassUnicastResponse != 0
 		if isUnicast {
 			err = s.conn.WriteUnicast(&resp, iface.Index, src)
@@ -209,6 +209,8 @@ func (s *server) broadcastRecords(unannounce bool) error {
 		resp.MsgHdr.Authoritative = true
 		resp.Compress = true
 		resp.Answer = s.recordsForIface(iface, unannounce)
+
+		s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 		err := s.conn.WriteMulticast(resp, iface.Index, nil)
 		errs = append(errs, err)
 		slog.Debug("broadcast", "iface", iface.Name, "goodbye", unannounce, "err", err)
