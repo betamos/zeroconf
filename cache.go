@@ -3,6 +3,8 @@ package zeroconf
 import (
 	"fmt"
 	"math/rand"
+	"net/netip"
+	"slices"
 	"time"
 )
 
@@ -14,27 +16,33 @@ const (
 	// maxCoalesceDuration = time.Millisecond * 25
 )
 
-// An operation on the state of the cache.
+// An operation that changes the state of the cache.
 type Op int
+
+const (
+	// An instance was discovered.
+	OpAdded Op = iota
+
+	// An instance was updated, which contains the latest info, and all non-expired addrs.
+	// An instance that keeps refreshing itself before expiry does not cause an update.
+	OpUpdated
+
+	// An instance expired or was intentionally removed. Note that there are no addrs with this op.
+	OpRemoved
+)
 
 func (op Op) String() string {
 	switch op {
 	case OpAdded:
 		return "[+]"
+	case OpUpdated:
+		return "[~]"
 	case OpRemoved:
 		return "[-]"
 	default:
 		return "[?]"
 	}
 }
-
-const (
-	// A service was discovered.
-	OpAdded Op = iota
-
-	// A service expired or was intentionally removed.
-	OpRemoved
-)
 
 type Event struct {
 	*Instance
@@ -49,7 +57,12 @@ func (e Event) String() string {
 // It relies on both the current time and query times in order to
 // expire instances and inform when new queries are needed.
 type cache struct {
-	instances map[string]*Instance
+	// map from instance name to a slice of "unique" instance records for the same instance,
+	// in case there are multiple announcements. the "authoritative" record is the last one,
+	// although other records can contain more addresses.
+	//
+	// invariant: slice sorted by lastSeen and always >= 1 element
+	instances map[string][]*Instance
 	cb        func(Event)
 	maxAge    time.Duration
 
@@ -75,9 +88,10 @@ type cache struct {
 // to the provided duration in seconds.
 func newCache(cb func(Event), maxAge time.Duration) *cache {
 	return &cache{
-		instances: make(map[string]*Instance),
-		cb:        cb,
-		maxAge:    maxAge,
+		instances: make(map[string][]*Instance),
+		//instances:  make(map[string]*Instance),
+		cb:     cb,
+		maxAge: maxAge,
 	}
 }
 
@@ -90,25 +104,48 @@ func (c *cache) Advance(now time.Time) {
 	c.refresh()
 }
 
-func (c *cache) Put(instance *Instance) {
-	k := instance.Name
-	instance.seenAt = c.now
-	if instance.ttl == 0 {
-		// Existing instance removed through a "Goodbye Packet"
-		if _, ok := c.instances[k]; ok {
-			c.cb(Event{instance, OpRemoved})
+func (c *cache) Put(i *Instance) {
+	k := i.Name
+	i.seenAt = c.now
+	defer c.refresh()
+
+	is := c.instances[i.Name]
+
+	// Instance removed through a "Goodbye Packet"
+	if i.ttl == 0 {
+		// ...But check that we actually have it first
+		if is != nil {
+			i.Addrs = nil
+			c.cb(Event{i, OpRemoved})
+			delete(c.instances, k)
 		}
-		delete(c.instances, k)
-	} else if _, ok := c.instances[k]; ok {
-		// Existing instance extended, suppress duplicates
-		// TODO: Compare and send updates.
-		c.instances[k] = instance
-	} else {
-		// New instance
-		c.cb(Event{instance, OpAdded})
-		c.instances[k] = instance
+		return
 	}
-	c.refresh()
+
+	// Added instance
+	if is == nil {
+		last := *i
+		last.Addrs = mergeAddrs(i) // Sort, for consistency
+		c.cb(Event{&last, OpAdded})
+		c.instances[k] = []*Instance{i}
+		return
+	}
+
+	// Invariant: len(is) > 0, which means this is an update
+
+	// Already "equal", simply update TTL without notifying the user
+	if idx := slices.IndexFunc(is, i.Equal); idx > -1 {
+		is[idx] = i
+		slices.SortFunc(is, byLastSeen)
+		return
+	}
+
+	// We assume this is a user-facing update
+	last := *i
+	last.Addrs = mergeAddrs(is...)
+	c.instances[k] = append(is, i)
+	c.cb(Event{&last, OpUpdated})
+
 }
 
 // Returns true if a query should be made right now. Remember to call `Queried()` after the
@@ -151,34 +188,77 @@ func (c *cache) NextDeadline() time.Time {
 func (c *cache) refresh() {
 	// Use maxInterval simply for a large time value
 	c.nextExpiry, c.nextLivecheck = c.now.Add(maxInterval), c.now.Add(maxInterval)
-	for k, instance := range c.instances {
+	for k, is := range c.instances {
 
-		// Compute inferred ttl
-		ttl := min(c.maxAge, time.Second*time.Duration(instance.ttl))
+		// Copy the last instance as authoritative as template for updates etc
+		last := *is[len(is)-1]
 
-		// If expired, remove instantly
-		expiry := instance.seenAt.Add(ttl)
-		if expiry.Before(c.now) {
-			c.cb(Event{instance, OpRemoved})
-			delete(c.instances, k)
-			continue
+		// Inferred ttl
+		ttl := min(c.maxAge, time.Second*time.Duration(last.ttl))
+
+		// If there are expired entries, update list and trigger an update
+		if n := expired(is, c.now, ttl); n > 0 {
+			is = is[n:]
+			last.Addrs = mergeAddrs(is...) // Remaining valid addresses, possibly empty
+
+			// All entries expired, so we remove
+			if len(is) == 0 {
+				delete(c.instances, k)
+				c.cb(Event{&last, OpRemoved})
+				continue
+			}
+
+			// Some entries remain, so we update
+
+			// Modifying a map entry during iteration is totally kosher but Go spec insists on
+			// making that hard to find because "it's too obvious"... Well
+			c.instances[k] = is
+			c.cb(Event{&last, OpUpdated})
 		}
 
-		// Update next expiry
-		if expiry.Before(c.nextExpiry) {
-			c.nextExpiry = expiry
+		// Use the first entry to update next expiry
+		firstExpiry := is[0].seenAt.Add(ttl)
+		if firstExpiry.Before(c.nextExpiry) {
+			c.nextExpiry = firstExpiry
 		}
 
 		// An instance has already been queried if it hasn't been seen since the last query
-		if instance.seenAt.Before(c.lastQuery) {
+		if is[0].seenAt.Before(c.lastQuery) {
 			continue
 		}
 
 		// Update next livecheck
 		floatDur := float64(ttl) * (0.80 + c.entropy*0.17) // 80-97% of ttl
-		liveCheck := instance.seenAt.Add(time.Duration(floatDur))
+		liveCheck := is[0].seenAt.Add(time.Duration(floatDur))
 		if liveCheck.Before(c.nextLivecheck) {
 			c.nextLivecheck = liveCheck
 		}
 	}
+}
+
+// Return sorted, distinct addrs from a number of instances
+func mergeAddrs(is ...*Instance) (addrs []netip.Addr) {
+	for _, i := range is {
+		addrs = append(addrs, i.Addrs...)
+	}
+	slices.SortFunc(addrs, netip.Addr.Compare)
+	slices.Compact(addrs)
+	return
+}
+
+// Returns the number of expired entries
+func expired(is []*Instance, now time.Time, ttl time.Duration) (n int) {
+	for _, i := range is {
+		// If expired, remove instantly
+		expiry := i.seenAt.Add(ttl)
+		if expiry.After(now) { // no more expired entries
+			break
+		}
+		n++
+	}
+	return n
+}
+
+func byLastSeen(a *Instance, b *Instance) int {
+	return int(a.seenAt.Sub(b.seenAt))
 }
