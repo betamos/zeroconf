@@ -51,7 +51,7 @@ func main() {
 
 	var err error
 	if *publish {
-		entry := &zeroconf.ServiceEntry{
+		instance := &zeroconf.Instance{
 			Name: *name,
 			Port: uint16(*port),
 			Text: []string{"txtv=0", "lo=1", "la=2"},
@@ -60,12 +60,12 @@ func main() {
 		}
 		if *addrs != "" {
 			for _, addr := range strings.Split(*addrs, ",") {
-				entry.Addrs = append(entry.Addrs, netip.MustParseAddr(addr))
+				instance.Addrs = append(instance.Addrs, netip.MustParseAddr(addr))
 			}
 		}
 
-		log.Printf("publishing [%v]: %v\n", *service, entry)
-		err = zeroconf.Publish(ctx, entry, *service, nil)
+		log.Printf("publishing [%v]: %v\n", *service, instance)
+		err = zeroconf.Publish(ctx, instance, *service, nil)
 
 	} else {
 

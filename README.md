@@ -31,18 +31,18 @@ $ go get -u github.com/libp2p/zeroconf/v2
 ## Browse for services in your local network
 
 ```go
-entries := make(chan *zeroconf.ServiceEntry)
-go func(results <-chan *zeroconf.ServiceEntry) {
-    for entry := range results {
-        log.Println(entry)
+instances := make(chan *zeroconf.Instance)
+go func(results <-chan *zeroconf.Instance) {
+    for instance := range results {
+        log.Println(instance)
     }
-    log.Println("No more entries.")
-}(entries)
+    log.Println("No more instances.")
+}(instances)
 
 ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
 defer cancel()
 // Discover all services on the network (e.g. _workstation._tcp)
-err = zeroconf.Browse(ctx, "_workstation._tcp", "local.", entries)
+err = zeroconf.Browse(ctx, "_workstation._tcp", "local.", instances)
 if err != nil {
     log.Fatalln("Failed to browse:", err.Error())
 }
@@ -91,7 +91,7 @@ See what needs to be done and submit a pull request :)
 * [x] Browse / Lookup / Register services
 * [x] Multiple IPv6 / IPv4 addresses support
 * [x] Send multiple probes (exp. back-off) if no service answers (*)
-* [x] Timestamp entries for TTL checks
+* [x] Timestamp instances for TTL checks
 * [ ] Compare new multicasts with already received services
 
 _Notes:_

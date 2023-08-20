@@ -11,9 +11,9 @@ import (
 )
 
 // IPType specifies the IP traffic the client listens for.
-// This does not guarantee that only mDNS entries of this sepcific
+// This does not guarantee that only mDNS instances of this sepcific
 // type passes. E.g. typical mDNS packets distributed via IPv4, often contain
-// both DNS A and AAAA entries.
+// both DNS A and AAAA records.
 type IPType uint8
 
 // Options for IPType.
@@ -63,11 +63,11 @@ func Browse(ctx context.Context, serviceStr string, cb func(Event), conf *Config
 }
 
 // Lookup a specific instance of a service.
-func Lookup(ctx context.Context, instanceName, service string, conf *Config) (entry *ServiceEntry, err error) {
+func Lookup(ctx context.Context, instanceName, service string, conf *Config) (instance *Instance, err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	err = Browse(ctx, service, func(event Event) {
 		if event.Op == OpAdded && instanceName == event.Name {
-			entry = event.ServiceEntry
+			instance = event.Instance
 			cancel()
 		}
 	}, conf)
@@ -98,7 +98,7 @@ func (c *client) mainloop(ctx context.Context) error {
 	defer timer.Stop()
 	var now time.Time
 	for {
-		var entries []*ServiceEntry
+		var instances []*Instance
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -108,7 +108,7 @@ func (c *client) mainloop(ctx context.Context) error {
 				return nil
 			}
 
-			if entries = serviceFromRecords(msg.Msg, c.service); entries == nil {
+			if instances = serviceFromRecords(msg.Msg, c.service); instances == nil {
 				continue
 			}
 
@@ -121,11 +121,11 @@ func (c *client) mainloop(ctx context.Context) error {
 
 		c.cache.Advance(now)
 
-		for _, entry := range entries {
+		for _, instance := range instances {
 			// TODO: Debug log when no events are emitted
-			c.cache.Put(entry)
+			c.cache.Put(instance)
 		}
-		clear(entries)
+		clear(instances)
 
 		if c.cache.ShouldQuery() {
 			_ = c.query() // TODO: Log?
@@ -137,8 +137,7 @@ func (c *client) mainloop(ctx context.Context) error {
 	}
 }
 
-// Performs the actual query by service name (browse) or service instance name (lookup),
-// start response listeners goroutines and loops over the entries channel.
+// Performs the actual query by service name.
 func (c *client) query() error {
 	m := new(dns.Msg)
 	m.Question = append(m.Question, dns.Question{

@@ -103,7 +103,7 @@ func (s *Service) queryName() (str string) {
 
 // Returns a complete service instance path, e.g. `MyDemo\ Service._foobar._tcp.local.`,
 // which is composed from service instance name, service name and a domain.
-func instancePath(s *Service, e *ServiceEntry) string {
+func instancePath(s *Service, e *Instance) string {
 	return fmt.Sprintf("%s.%s.%s.", e.escapeName(), s.Type, s.Domain)
 }
 
@@ -127,10 +127,10 @@ func parseInstancePath(s string) (service *Service, instance string, err error) 
 	return service, instance, nil
 }
 
-// ServiceEntry represents a browse/lookup result for client API.
+// Instance represents a browse/lookup result for client API.
 // It is also used to configure service registration (server API), which is
 // used to answer multicast queries.
-type ServiceEntry struct {
+type Instance struct {
 	// Instance name, e.g. `Mr. Office Printer`  (avoid backslash)
 	Name string `json:"name"`
 
@@ -151,37 +151,37 @@ type ServiceEntry struct {
 	seenAt time.Time
 }
 
-func (s *ServiceEntry) String() string {
-	return fmt.Sprintf("%v (%v)", s.Name, s.Hostname)
+func (i *Instance) String() string {
+	return fmt.Sprintf("%v (%v)", i.Name, i.Hostname)
 }
 
-func (s *ServiceEntry) Validate() error {
-	if s.Hostname == "" {
+func (i *Instance) Validate() error {
+	if i.Hostname == "" {
 		return errors.New("no instance specified")
 	}
-	if s.Hostname == "" {
+	if i.Hostname == "" {
 		return errors.New("no hostname specified")
 	}
-	if s.Port == 0 {
+	if i.Port == 0 {
 		return errors.New("port is 0")
 	}
 	return nil
 }
 
-func (s *ServiceEntry) hostname() string {
-	return fmt.Sprintf("%v.", s.Hostname)
+func (i *Instance) hostname() string {
+	return fmt.Sprintf("%v.", i.Hostname)
 }
 
-func (s *ServiceEntry) Equal(o *ServiceEntry) bool {
-	if s.Hostname != o.Hostname || s.Port != o.Port || !slices.Equal(s.Text, o.Text) {
+func (i *Instance) Equal(o *Instance) bool {
+	if i.Hostname != o.Hostname || i.Port != o.Port || !slices.Equal(i.Text, o.Text) {
 		return false
 	}
 	// Note we're not sorting ("normalizing") addresses, since the order can indicate preference
-	return slices.Equal(s.Addrs, o.Addrs)
+	return slices.Equal(i.Addrs, o.Addrs)
 }
 
 // RFC 6763 Section 4.3: [...] the <Instance> portion is allowed to contain any characters
 // Spaces and backslashes are escaped by "github.com/miekg/dns".
-func (s *ServiceEntry) escapeName() string {
+func (s *Instance) escapeName() string {
 	return strings.ReplaceAll(s.Name, ".", "\\.")
 }

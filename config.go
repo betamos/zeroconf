@@ -11,7 +11,7 @@ type Config struct {
 	Interfaces func() ([]net.Interface, error)
 
 	// IP protocol(s) for both client and server, default = IPv4AndIPv6.
-	// Note that service entries from others may still include addresses of either type.
+	// Note that while browsing, other instances may still include addresses of either type.
 	IPType IPType
 
 	// While browsing, artificially shorten the life-time of them if their advertised TTL is higher,

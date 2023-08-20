@@ -36,23 +36,22 @@ const (
 	OpRemoved
 )
 
-// An event consists of an operation and a service entry.
 type Event struct {
-	*ServiceEntry
+	*Instance
 	Op Op
 }
 
 func (e Event) String() string {
-	return fmt.Sprintf("%v %v", e.Op, e.ServiceEntry)
+	return fmt.Sprintf("%v %v", e.Op, e.Instance)
 }
 
-// The cache maintains a map of service entries and notifies the user of changes.
+// The cache maintains a map of service instances and notifies the user of changes.
 // It relies on both the current time and query times in order to
-// expire entries and inform when new queries are needed.
+// expire instances and inform when new queries are needed.
 type cache struct {
-	entries map[string]*ServiceEntry
-	cb      func(Event)
-	maxAge  time.Duration
+	instances map[string]*Instance
+	cb        func(Event)
+	maxAge    time.Duration
 
 	// A number in range [0,1) used for query scheduling jitter. Regenerated at query time.
 	entropy float64
@@ -60,25 +59,25 @@ type cache struct {
 	// Advanced by user
 	lastQuery, now time.Time
 
-	// The earliest expiry time of the entries in the cache.
+	// The earliest expiry time of the instances in the cache.
 	nextExpiry time.Time
 
-	// The earliest live check scheduled, based on lastQuery and cache entries.
-	// A live check query happens at 80-97% of an entry expiry. To prevent excessive
-	// queries, only entries that responded to the last query are considered for a live check.
+	// The earliest live check scheduled, based on lastQuery and cache instances.
+	// A live check query happens at 80-97% of an instance expiry. To prevent excessive
+	// queries, only instances that responded to the last query are considered for a live check.
 	nextLivecheck time.Time
 
 	// Next periodic query, doubling based on lastQuery and capped at 60 min.
 	nextPeriodic time.Time
 }
 
-// Create a new cache with an event callback. If maxTTL is non-zero, entries in the cache are capped
+// Create a new cache with an event callback. If maxTTL is non-zero, instances in the cache are capped
 // to the provided duration in seconds.
 func newCache(cb func(Event), maxAge time.Duration) *cache {
 	return &cache{
-		entries: make(map[string]*ServiceEntry),
-		cb:      cb,
-		maxAge:  maxAge,
+		instances: make(map[string]*Instance),
+		cb:        cb,
+		maxAge:    maxAge,
 	}
 }
 
@@ -91,23 +90,23 @@ func (c *cache) Advance(now time.Time) {
 	c.refresh()
 }
 
-func (c *cache) Put(entry *ServiceEntry) {
-	k := entry.Name
-	entry.seenAt = c.now
-	if entry.ttl == 0 {
-		// Existing entry removed through a "Goodbye Packet"
-		if _, ok := c.entries[k]; ok {
-			c.cb(Event{entry, OpRemoved})
+func (c *cache) Put(instance *Instance) {
+	k := instance.Name
+	instance.seenAt = c.now
+	if instance.ttl == 0 {
+		// Existing instance removed through a "Goodbye Packet"
+		if _, ok := c.instances[k]; ok {
+			c.cb(Event{instance, OpRemoved})
 		}
-		delete(c.entries, k)
-	} else if _, ok := c.entries[k]; ok {
-		// Existing entry extended, suppress duplicates
+		delete(c.instances, k)
+	} else if _, ok := c.instances[k]; ok {
+		// Existing instance extended, suppress duplicates
 		// TODO: Compare and send updates.
-		c.entries[k] = entry
+		c.instances[k] = instance
 	} else {
-		// New entry
-		c.cb(Event{entry, OpAdded})
-		c.entries[k] = entry
+		// New instance
+		c.cb(Event{instance, OpAdded})
+		c.instances[k] = instance
 	}
 	c.refresh()
 }
@@ -152,16 +151,16 @@ func (c *cache) NextDeadline() time.Time {
 func (c *cache) refresh() {
 	// Use maxInterval simply for a large time value
 	c.nextExpiry, c.nextLivecheck = c.now.Add(maxInterval), c.now.Add(maxInterval)
-	for k, entry := range c.entries {
+	for k, instance := range c.instances {
 
 		// Compute inferred ttl
-		ttl := min(c.maxAge, time.Second*time.Duration(entry.ttl))
+		ttl := min(c.maxAge, time.Second*time.Duration(instance.ttl))
 
 		// If expired, remove instantly
-		expiry := entry.seenAt.Add(ttl)
+		expiry := instance.seenAt.Add(ttl)
 		if expiry.Before(c.now) {
-			c.cb(Event{entry, OpRemoved})
-			delete(c.entries, k)
+			c.cb(Event{instance, OpRemoved})
+			delete(c.instances, k)
 			continue
 		}
 
@@ -170,14 +169,14 @@ func (c *cache) refresh() {
 			c.nextExpiry = expiry
 		}
 
-		// An entry has already been queried if it hasn't been seen since the last query
-		if entry.seenAt.Before(c.lastQuery) {
+		// An instance has already been queried if it hasn't been seen since the last query
+		if instance.seenAt.Before(c.lastQuery) {
 			continue
 		}
 
 		// Update next livecheck
 		floatDur := float64(ttl) * (0.80 + c.entropy*0.17) // 80-97% of ttl
-		liveCheck := entry.seenAt.Add(time.Duration(floatDur))
+		liveCheck := instance.seenAt.Add(time.Duration(floatDur))
 		if liveCheck.Before(c.nextLivecheck) {
 			c.nextLivecheck = liveCheck
 		}

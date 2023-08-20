@@ -127,16 +127,16 @@ func answerTo(records, knowns []dns.RR, question dns.Question) (answers, extras 
 	return
 }
 
-// Return a single service entry from the msg that matches the "search record" provided.
+// Return a single service instance from the msg that matches the "search record" provided.
 // Typically, the search record is a "browsing" record for a service (i.e. no instance).
-func serviceFromRecords(msg *dns.Msg, search *Service) (entries []*ServiceEntry) {
+func serviceFromRecords(msg *dns.Msg, search *Service) (instances []*Instance) {
 	// TODO: Support meta-queries
 	var (
 		answers  = append(msg.Answer, msg.Extra...)
 		question = search.queryName()
-		m        = make(map[string]*ServiceEntry, 1) // temporary map of instance paths to entries
+		m        = make(map[string]*Instance, 1) // temporary map of instance paths to instances
 		addrMap  = make(map[string][]netip.Addr, 1)
-		entry    *ServiceEntry
+		instance *Instance
 	)
 
 	// PTR, then SRV + TXT, then A and AAAA. The following loop depends on it
@@ -145,7 +145,7 @@ func serviceFromRecords(msg *dns.Msg, search *Service) (entries []*ServiceEntry)
 
 	for _, answer := range answers {
 		switch rr := answer.(type) {
-		// Phase 1: create entries
+		// Phase 1: create instances
 		case *dns.PTR:
 			if rr.Hdr.Name != question { // match question, e.g. `_printer._sub._http._tcp.`
 				continue
@@ -154,22 +154,22 @@ func serviceFromRecords(msg *dns.Msg, search *Service) (entries []*ServiceEntry)
 			// pointer to instance path, e.g. `My Printer._http._tcp.`
 			service, instanceName, err := parseInstancePath(rr.Ptr)
 			if err == nil && search.Equal(service) {
-				m[rr.Ptr] = &ServiceEntry{Name: instanceName}
+				m[rr.Ptr] = &Instance{Name: instanceName}
 			}
 
 		// Phase 2: populate other fields
 		case *dns.SRV:
-			if entry = m[rr.Hdr.Name]; entry == nil {
+			if instance = m[rr.Hdr.Name]; instance == nil {
 				continue
 			}
-			entry.Hostname = rr.Target
-			entry.Port = rr.Port
-			entry.ttl = rr.Hdr.Ttl
+			instance.Hostname = rr.Target
+			instance.Port = rr.Port
+			instance.ttl = rr.Hdr.Ttl
 		case *dns.TXT:
-			if entry = m[rr.Hdr.Name]; entry == nil {
+			if instance = m[rr.Hdr.Name]; instance == nil {
 				continue
 			}
-			entry.Text = rr.Txt
+			instance.Text = rr.Txt
 
 		// Phase 3: add addrs to addrMap
 		case *dns.A:
@@ -183,24 +183,24 @@ func serviceFromRecords(msg *dns.Msg, search *Service) (entries []*ServiceEntry)
 		}
 	}
 
-	for _, entry := range m {
-		entry.Addrs = addrMap[entry.Hostname]
+	for _, instance := range m {
+		instance.Addrs = addrMap[instance.Hostname]
 
 		// Unescape afterwards to maintain comparison soundness above
-		entry.Hostname = unescapeDns(entry.Hostname)
-		for i, txt := range entry.Text {
-			entry.Text[i] = unescapeDns(txt)
+		instance.Hostname = unescapeDns(instance.Hostname)
+		for i, txt := range instance.Text {
+			instance.Text[i] = unescapeDns(txt)
 		}
-		entry.Hostname = trimDot(entry.Hostname)
-		if err := entry.Validate(); err != nil {
+		instance.Hostname = trimDot(instance.Hostname)
+		if err := instance.Validate(); err != nil {
 			continue
 		}
-		entries = append(entries, entry)
+		instances = append(instances, instance)
 	}
 	return
 }
 
-func recordsFromService(service *Service, entry *ServiceEntry, unannounce bool) (records []dns.RR) {
+func recordsFromService(service *Service, instance *Instance, unannounce bool) (records []dns.RR) {
 
 	// RFC6762 Section 10: Records referencing a hostname (SRV/A/AAAA) SHOULD use TTL of 120 s,
 	// to account for network interface and IP address changes, while others should be 75 min.
@@ -210,11 +210,11 @@ func recordsFromService(service *Service, entry *ServiceEntry, unannounce bool) 
 	}
 
 	names := service.responderNames()
-	instancePath := instancePath(service, entry)
-	hostname := entry.hostname()
+	instancePath := instancePath(service, instance)
+	hostname := instance.hostname()
 
 	// Pre-initialize length for efficiency
-	records = make([]dns.RR, 0, len(names)+len(entry.Addrs)+3)
+	records = make([]dns.RR, 0, len(names)+len(instance.Addrs)+3)
 
 	// PTR records
 	for _, name := range names {
@@ -252,7 +252,7 @@ func recordsFromService(service *Service, entry *ServiceEntry, unannounce bool) 
 			Class:  uniqueRecordClass,
 			Ttl:    defaultTTL,
 		},
-		Port:   entry.Port,
+		Port:   instance.Port,
 		Target: hostname,
 	})
 
@@ -264,7 +264,7 @@ func recordsFromService(service *Service, entry *ServiceEntry, unannounce bool) 
 			Class:  uniqueRecordClass,
 			Ttl:    defaultTTL,
 		},
-		Txt: entry.Text,
+		Txt: instance.Text,
 	})
 
 	// NSEC for SRV, TXT
@@ -281,7 +281,7 @@ func recordsFromService(service *Service, entry *ServiceEntry, unannounce bool) 
 	})
 
 	// A and AAAA records
-	for _, addr := range entry.Addrs {
+	for _, addr := range instance.Addrs {
 		if addr.Is4() {
 			records = append(records, &dns.A{
 				Hdr: dns.RR_Header{

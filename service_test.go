@@ -14,25 +14,25 @@ var (
 )
 
 func startMDNS(t *testing.T, port uint16, name, service string) {
-	entry := &ServiceEntry{
+	instance := &Instance{
 		Name: name,
 		Port: port,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go Publish(ctx, entry, service, nil)
+	go Publish(ctx, instance, service, nil)
 	t.Cleanup(cancel)
 }
 
 func TestQuickShutdown(t *testing.T) {
-	entry := &ServiceEntry{
+	instance := &Instance{
 		Name: testName,
 		Port: testPort,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	t0 := time.Now()
-	Publish(ctx, entry, testService, nil)
+	Publish(ctx, instance, testService, nil)
 	if time.Since(t0) > 500*time.Millisecond {
 		t.Fatal("shutdown took longer than 500ms")
 	}
@@ -43,16 +43,16 @@ func TestBasic(t *testing.T) {
 	defer cancel()
 	startMDNS(t, testPort, testName, testService)
 
-	entries := make([]Event, 0)
+	instances := make([]Event, 0)
 	Browse(ctx, testService, func(e Event) {
-		entries = append(entries, e)
+		instances = append(instances, e)
 	}, nil)
 	<-ctx.Done()
 
-	if len(entries) < 1 {
-		t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
+	if len(instances) < 1 {
+		t.Fatalf("Expected >=1 service instances, but got %d", len(instances))
 	}
-	result := entries[0]
+	result := instances[0]
 	if result.Name != testName {
 		t.Fatalf("Expected instance is %s, but got %s", testName, result.Name)
 	}
@@ -65,14 +65,14 @@ func TestNoPublish(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	entries := make([]Event, 0)
+	instances := make([]Event, 0)
 	Browse(ctx, testService, func(e Event) {
-		entries = append(entries, e)
+		instances = append(instances, e)
 	}, nil)
 	<-ctx.Done()
 
-	if len(entries) > 0 {
-		t.Fatalf("Expected 0 service entries, but got %d", len(entries))
+	if len(instances) > 0 {
+		t.Fatalf("Expected 0 service instances, but got %d", len(instances))
 	}
 }
 
@@ -83,16 +83,16 @@ func TestSubtype(t *testing.T) {
 
 		startMDNS(t, testPort, testName, testServiceWithSubtype)
 
-		entries := make([]Event, 0)
+		instances := make([]Event, 0)
 		Browse(ctx, testService, func(e Event) {
-			entries = append(entries, e)
+			instances = append(instances, e)
 		}, nil)
 		<-ctx.Done()
 
-		if len(entries) < 1 {
-			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
+		if len(instances) < 1 {
+			t.Fatalf("Expected >=1 service instances, but got %d", len(instances))
 		}
-		result := entries[0]
+		result := instances[0]
 		if result.Name != testName {
 			t.Fatalf("Expected instance is %s, but got %s", testName, result.Name)
 		}
@@ -107,16 +107,16 @@ func TestSubtype(t *testing.T) {
 
 		startMDNS(t, testPort, testName, testServiceWithSubtype)
 
-		entries := make([]Event, 0)
+		instances := make([]Event, 0)
 		Browse(ctx, testService, func(e Event) {
-			entries = append(entries, e)
+			instances = append(instances, e)
 		}, nil)
 		<-ctx.Done()
 
-		if len(entries) < 1 {
-			t.Fatalf("Expected >=1 service entries, but got %d", len(entries))
+		if len(instances) < 1 {
+			t.Fatalf("Expected >=1 service instances, but got %d", len(instances))
 		}
-		result := entries[0]
+		result := instances[0]
 		if result.Name != testName {
 			t.Fatalf("Expected instance is %s, but got %s", testName, result.Name)
 		}

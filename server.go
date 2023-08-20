@@ -21,7 +21,7 @@ const (
 
 var defaultHostname, _ = os.Hostname()
 
-// Publish a service entry. Name and Port are required, while Text is optional.
+// Publish a service instance. Name and Port are required, while Text is optional.
 // Addrs and Hostname are determined automatically, but can be overriden.
 //
 // Service type should be on the form `_my-service._tcp` or `_my-service._udp`
@@ -29,7 +29,7 @@ var defaultHostname, _ = os.Hostname()
 // You may add subtypes after a comma, e.g. `_my-service._tcp,_printer,_ipp`.
 // By default, the domain `local` is used, but you can override it by adding
 // path components, e.g. `_my-service._tcp.custom.dev` (not recommended).
-func Publish(ctx context.Context, entry *ServiceEntry, serviceType string, conf *Config) error {
+func Publish(ctx context.Context, instance *Instance, serviceType string, conf *Config) error {
 	if conf == nil {
 		conf = new(Config)
 	}
@@ -43,18 +43,18 @@ func Publish(ctx context.Context, entry *ServiceEntry, serviceType string, conf 
 	if err != nil {
 		return err
 	}
-	if entry.Hostname == "" {
-		entry.Hostname = fmt.Sprintf("%v.%v", defaultHostname, service.Domain)
+	if instance.Hostname == "" {
+		instance.Hostname = fmt.Sprintf("%v.%v", defaultHostname, service.Domain)
 	}
-	if err := entry.Validate(); err != nil {
+	if err := instance.Validate(); err != nil {
 		conn.Close()
 		return err
 	}
 
 	s := &server{
-		conn:    conn,
-		service: service,
-		entry:   entry,
+		conn:     conn,
+		service:  service,
+		instance: instance,
 	}
 	err = s.serve(ctx)
 	s.conn.Close()
@@ -63,9 +63,9 @@ func Publish(ctx context.Context, entry *ServiceEntry, serviceType string, conf 
 
 // Server structure encapsulates both IPv4/IPv6 UDP connections
 type server struct {
-	service *Service
-	entry   *ServiceEntry
-	conn    *dualConn
+	service  *Service
+	instance *Instance
+	conn     *dualConn
 }
 
 func (s *server) serve(ctx context.Context) error {
@@ -115,15 +115,15 @@ func (s *server) recv(ctx context.Context) {
 // Generate DNS records with the IPs (A/AAAA) for the provided interface (unless addrs were
 // provided by the user).
 func (s *server) recordsForIface(iface *Interface, unannounce bool) []dns.RR {
-	// Copy the entry to create a new one with the right ips
-	entry := *s.entry
+	// Copy the instance to create a new one with the right ips
+	instance := *s.instance
 
-	if len(s.entry.Addrs) == 0 {
-		entry.Addrs = append(entry.Addrs, iface.v4...)
-		entry.Addrs = append(entry.Addrs, iface.v6...)
+	if len(s.instance.Addrs) == 0 {
+		instance.Addrs = append(instance.Addrs, iface.v4...)
+		instance.Addrs = append(instance.Addrs, iface.v6...)
 	}
 
-	return recordsFromService(s.service, &entry, unannounce)
+	return recordsFromService(s.service, &instance, unannounce)
 }
 
 func (s *server) handleQuery(msg MsgMeta) error {
