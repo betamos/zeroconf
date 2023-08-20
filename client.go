@@ -77,28 +77,31 @@ func (c *client) run(ctx context.Context) error {
 
 // Start listeners and waits for the shutdown signal from exit channel
 func (c *client) mainloop(ctx context.Context) error {
-	// start listening for responses
-	msgCh := make(chan MsgMeta, 32)
-	go c.conn.RunReader(msgCh)
+	var (
+		timer = time.NewTimer(0)
+		now   time.Time
+		msgCh = make(chan MsgMeta, 32)
+		is    []*Instance
+	)
 
-	timer := time.NewTimer(0)
+	go c.conn.RunReader(msgCh)
 	defer timer.Stop()
-	var now time.Time
+
+	done := ctx.Done()
+loop:
 	for {
-		var instances []*Instance
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-done:
+			c.conn.SetReadDeadline(time.Now())
+			done = nil // never canceled
 		case now = <-timer.C:
 		case msg, ok := <-msgCh:
 			if !ok {
-				return nil
+				break loop
 			}
-
-			if instances = serviceFromRecords(msg.Msg, c.service); instances == nil {
+			if is = serviceFromRecords(msg.Msg, c.service); len(is) == 0 {
 				continue
 			}
-
 			// Prepare to operate on the cache below
 			now = time.Now()
 			if !timer.Stop() {
@@ -108,11 +111,11 @@ func (c *client) mainloop(ctx context.Context) error {
 
 		c.cache.Advance(now)
 
-		for _, instance := range instances {
+		for _, i := range is {
 			// TODO: Debug log when no events are emitted
-			c.cache.Put(instance)
+			c.cache.Put(i)
 		}
-		clear(instances)
+		is = nil
 
 		if c.cache.ShouldQuery() {
 			_ = c.query() // TODO: Log?
@@ -122,10 +125,12 @@ func (c *client) mainloop(ctx context.Context) error {
 		// Invariant: the timer is currently stopped, so can be safely reset
 		timer.Reset(c.cache.NextDeadline().Sub(now))
 	}
+	return context.Cause(ctx)
 }
 
 // Performs the actual query by service name.
 func (c *client) query() error {
+	c.conn.loadIfaces()
 	m := new(dns.Msg)
 	m.Question = append(m.Question, dns.Question{
 		Name:   c.service.queryName(),
