@@ -39,7 +39,7 @@ func Publish(ctx context.Context, instance *Instance, serviceType string, conf *
 		return err
 	}
 
-	conn, err := newDualConn(conf.Interfaces, conf.ipType())
+	conn, err := newDualConn(conf.interfaces(), conf.ipType())
 	if err != nil {
 		return err
 	}

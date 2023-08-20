@@ -10,19 +10,6 @@ import (
 	"github.com/miekg/dns"
 )
 
-// IPType specifies the IP traffic the client listens for.
-// This does not guarantee that only mDNS instances of this sepcific
-// type passes. E.g. typical mDNS packets distributed via IPv4, often contain
-// both DNS A and AAAA records.
-type IPType uint8
-
-// Options for IPType.
-const (
-	IPv4        IPType = 0x01
-	IPv6        IPType = 0x02
-	IPv4AndIPv6        = IPv4 | IPv6 // default option
-)
-
 // Client structure encapsulates both IPv4/IPv6 UDP connections.
 type client struct {
 	conn *dualConn
@@ -40,7 +27,7 @@ func Browse(ctx context.Context, serviceStr string, cb func(Event), conf *Config
 	if conf == nil {
 		conf = new(Config)
 	}
-	conn, err := newDualConn(conf.Interfaces, conf.ipType())
+	conn, err := newDualConn(conf.interfaces(), conf.ipType())
 	if err != nil {
 		return err
 	}

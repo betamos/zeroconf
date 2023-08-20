@@ -43,38 +43,30 @@ type dualConn struct {
 
 func newDualConn(ifacesFn func() ([]net.Interface, error), ipType IPType) (*dualConn, error) {
 
-	if (ipType&IPv4) == 0 && (ipType&IPv6) == 0 {
+	var (
+		is4, is6   = ipType&IPv4 != 0, ipType&IPv6 != 0
+		err4, err6 error
+	)
+
+	if !(is4 || is6) {
 		return nil, errors.New("invalid ip type")
-	}
-	if ifacesFn == nil {
-		ifacesFn = net.Interfaces
 	}
 
 	c := &dualConn{
 		ifaces:   make(map[int]*Interface),
 		ifacesFn: ifacesFn,
 	}
-	var err error
-	// IPv4 interfaces
-	if (ipType & IPv4) > 0 {
-		c.c4, err = newConn4()
-		if err != nil {
-			return nil, err
-		}
+	if is4 {
+		c.c4, err4 = newConn4()
 	}
-	// IPv6 interfaces
-	if (ipType & IPv6) > 0 {
-		c.c6, err = newConn6()
-		if err != nil {
-			c.Close() // Closes c4, if any
-			return nil, err
-		}
+	if is6 {
+		c.c6, err6 = newConn6()
 	}
-	if _, err := c.loadIfaces(); err != nil {
+	_, err := c.loadIfaces()
+	if err := errors.Join(err4, err6, err); err != nil {
 		c.Close()
 		return nil, err
 	}
-
 	return c, nil
 }
 
