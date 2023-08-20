@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -69,46 +68,47 @@ type server struct {
 }
 
 func (s *server) serve(ctx context.Context) error {
-	s.conn.SetDeadline(time.Time{})
+	s.conn.SetReadDeadline(time.Time{})
 
-	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancelCause(ctx)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		s.recv(ctx)
-	}()
-	go func() {
-		defer wg.Done()
-		if err := s.announce(ctx); err != nil {
-			cancel(err)
-		}
-	}()
-	<-ctx.Done()
-	now := time.Now()
-	s.conn.SetDeadline(now)
-	wg.Wait()
-
-	err := s.broadcastRecords(true) // unregister
-	return errors.Join(context.Cause(ctx), err)
-}
-
-// recv4 is a long running routine to receive packets from an interface
-func (s *server) recv(ctx context.Context) {
 	msgCh := make(chan MsgMeta, 32)
 	go s.conn.RunReader(msgCh)
 
+	// From RFC6762
+	//    The Multicast DNS responder MUST send at least two unsolicited
+	//    responses, one second apart. To provide increased robustness against
+	//    packet loss, a responder MAY send up to eight unsolicited responses,
+	//    provided that the interval between unsolicited responses increases by
+	//    at least a factor of two with every response sent.
+
+	var remainingAnnounces = announceCount
+	timeout := time.Second
+	timer := time.NewTimer(0)
+
+	done := ctx.Done()
+loop:
 	for {
 		select {
-		case <-ctx.Done():
-			return
+		case <-done:
+			s.conn.SetReadDeadline(time.Now())
+			done = nil // never canceled
 		case msg, ok := <-msgCh:
 			if !ok {
-				return
+				break loop
 			}
 			_ = s.handleQuery(msg)
+		case <-timer.C:
+			if remainingAnnounces == 0 {
+				continue
+			}
+			remainingAnnounces--
+
+			_ = s.broadcastRecords(false)
+			timeout *= 2
+			timer.Reset(timeout)
 		}
 	}
+	_ = s.broadcastRecords(true)
+	return context.Cause(ctx)
 }
 
 // Generate DNS records with the IPs (A/AAAA) for the provided interface (unless addrs were
@@ -176,28 +176,6 @@ func (s *server) handleQueryForIface(query *dns.Msg, iface *Interface, src netip
 	}
 
 	return err
-}
-
-// Perform probing & announcement
-func (s *server) announce(ctx context.Context) error {
-	// TODO: implement a proper probing & conflict resolution
-
-	// From RFC6762
-	//    The Multicast DNS responder MUST send at least two unsolicited
-	//    responses, one second apart. To provide increased robustness against
-	//    packet loss, a responder MAY send up to eight unsolicited responses,
-	//    provided that the interval between unsolicited responses increases by
-	//    at least a factor of two with every response sent.
-
-	timeout := time.Second
-	for i := 0; i < announceCount; i++ {
-		_ = s.broadcastRecords(false)
-		if err := sleepContext(ctx, timeout); err != nil {
-			return err
-		}
-		timeout *= 2
-	}
-	return nil
 }
 
 // Broadcast all records to all interfaces. If unannounce is set, the TTLs are zero
