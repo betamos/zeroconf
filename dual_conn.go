@@ -137,14 +137,10 @@ func recvLoop(c conn, msgCh chan MsgMeta) error {
 			return err
 		}
 		srcNetip := src.(*net.UDPAddr).AddrPort()
-		if srcNetip.Port() != mdnsPort {
-			slog.Warn("ignoring unexpected UDP msg", "src", src)
-			continue
-		}
 
 		msg := new(dns.Msg)
 		if err := msg.Unpack(buf[:n]); err != nil {
-			// log.Printf("[WARN] mdns: Failed to unpack packet: %v", err)
+			slog.Debug("failed to unpack packet", "src", src, "err", err)
 			continue
 		}
 		msgCh <- MsgMeta{msg, srcNetip.Addr().Unmap(), ifIndex}
