@@ -141,9 +141,10 @@ func (c *cache) Put(i *Instance) {
 	}
 
 	// We assume this is a user-facing update
+	is = append(is, i)
 	last := *i
 	last.Addrs = mergeAddrs(is...)
-	c.instances[k] = append(is, i)
+	c.instances[k] = is
 	c.cb(Event{&last, OpUpdated})
 
 }
