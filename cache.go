@@ -243,8 +243,7 @@ func mergeAddrs(is ...*Instance) (addrs []netip.Addr) {
 		addrs = append(addrs, i.Addrs...)
 	}
 	slices.SortFunc(addrs, netip.Addr.Compare)
-	slices.Compact(addrs)
-	return
+	return slices.Compact(addrs)
 }
 
 // Returns the number of expired entries
