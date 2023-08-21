@@ -15,26 +15,12 @@ const mdnsPort = 5353
 
 var (
 	// Multicast groups used by mDNS
-	mdnsGroupIPv4 = net.IPv4(224, 0, 0, 251)
-	mdnsGroupIPv6 = net.ParseIP("ff02::fb")
-
-	// mDNS wildcard addresses
-	mdnsWildcardAddrIPv4 = &net.UDPAddr{
-		IP:   net.ParseIP("224.0.0.0"),
-		Port: mdnsPort,
-	}
-	mdnsWildcardAddrIPv6 = &net.UDPAddr{
-		IP:   net.ParseIP("ff02::"),
-		Port: mdnsPort,
-	}
-
-	// mDNS endpoint addresses
 	ipv4Addr = &net.UDPAddr{
-		IP:   mdnsGroupIPv4,
+		IP:   net.IPv4(224, 0, 0, 251),
 		Port: mdnsPort,
 	}
 	ipv6Addr = &net.UDPAddr{
-		IP:   mdnsGroupIPv6,
+		IP:   net.ParseIP("ff02::fb"),
 		Port: mdnsPort,
 	}
 )
@@ -78,7 +64,7 @@ var _ conn = &conn4{}
 func newConn4() (c *conn4, err error) {
 	// IPv4 interfaces
 
-	udpConn, err := net.ListenUDP("udp4", mdnsWildcardAddrIPv4)
+	udpConn, err := net.ListenUDP("udp4", ipv4Addr)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +75,7 @@ func newConn4() (c *conn4, err error) {
 }
 
 func (c *conn4) JoinMulticast(iface net.Interface) (err error) {
-	return c.JoinGroup(&iface, &net.UDPAddr{IP: mdnsGroupIPv4})
+	return c.JoinGroup(&iface, ipv4Addr)
 }
 
 func (c *conn4) ReadMulticast(buf []byte) (n int, src net.Addr, ifIndex int, err error) {
@@ -130,7 +116,7 @@ var _ conn = &conn6{}
 
 func newConn6() (c *conn6, err error) {
 	// TODO: Use `REUSEPORT`, RFC 6762 section 15.1.
-	udpConn, err := net.ListenUDP("udp6", mdnsWildcardAddrIPv6)
+	udpConn, err := net.ListenUDP("udp6", ipv6Addr)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +127,7 @@ func newConn6() (c *conn6, err error) {
 }
 
 func (c *conn6) JoinMulticast(iface net.Interface) (err error) {
-	return c.JoinGroup(&iface, &net.UDPAddr{IP: mdnsGroupIPv6})
+	return c.JoinGroup(&iface, ipv6Addr)
 }
 
 func (c *conn6) ReadMulticast(buf []byte) (n int, src net.Addr, ifIndex int, err error) {
