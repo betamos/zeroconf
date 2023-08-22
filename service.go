@@ -147,7 +147,7 @@ type Instance struct {
 	Addrs []netip.Addr `json:"addrs"`
 
 	// Internal expiry info used by cache
-	ttl    uint32
+	ttl    time.Duration
 	seenAt time.Time
 }
 

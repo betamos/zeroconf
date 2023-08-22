@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -136,8 +137,11 @@ func serviceFromRecords(msg *dns.Msg, search *Service) (instances []*Instance) {
 		question = search.queryName()
 		m        = make(map[string]*Instance, 1) // temporary map of instance paths to instances
 		addrMap  = make(map[string][]netip.Addr, 1)
-		instance *Instance
+		i        *Instance
 	)
+	if len(msg.Question) > 0 {
+		return
+	}
 
 	// PTR, then SRV + TXT, then A and AAAA. The following loop depends on it
 	// Note that stable sort is necessary to preserve order of A and AAAA records
@@ -159,17 +163,17 @@ func serviceFromRecords(msg *dns.Msg, search *Service) (instances []*Instance) {
 
 		// Phase 2: populate other fields
 		case *dns.SRV:
-			if instance = m[rr.Hdr.Name]; instance == nil {
+			if i = m[rr.Hdr.Name]; i == nil {
 				continue
 			}
-			instance.Hostname = rr.Target
-			instance.Port = rr.Port
-			instance.ttl = rr.Hdr.Ttl
+			i.Hostname = rr.Target
+			i.Port = rr.Port
+			i.ttl = time.Second * time.Duration(rr.Hdr.Ttl)
 		case *dns.TXT:
-			if instance = m[rr.Hdr.Name]; instance == nil {
+			if i = m[rr.Hdr.Name]; i == nil {
 				continue
 			}
-			instance.Text = rr.Txt
+			i.Text = rr.Txt
 
 		// Phase 3: add addrs to addrMap
 		case *dns.A:
@@ -183,19 +187,19 @@ func serviceFromRecords(msg *dns.Msg, search *Service) (instances []*Instance) {
 		}
 	}
 
-	for _, instance := range m {
-		instance.Addrs = addrMap[instance.Hostname]
+	for _, i := range m {
+		i.Addrs = addrMap[i.Hostname]
 
 		// Unescape afterwards to maintain comparison soundness above
-		instance.Hostname = unescapeDns(instance.Hostname)
-		for i, txt := range instance.Text {
-			instance.Text[i] = unescapeDns(txt)
+		i.Hostname = unescapeDns(i.Hostname)
+		for idx, txt := range i.Text {
+			i.Text[idx] = unescapeDns(txt)
 		}
-		instance.Hostname = trimDot(instance.Hostname)
-		if err := instance.Validate(); err != nil {
+		i.Hostname = trimDot(i.Hostname)
+		if err := i.Validate(); err != nil {
 			continue
 		}
-		instances = append(instances, instance)
+		instances = append(instances, i)
 	}
 	return
 }

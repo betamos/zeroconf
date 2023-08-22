@@ -64,7 +64,6 @@ type cache struct {
 	// invariant: slice sorted by lastSeen and always >= 1 element
 	instances map[string][]*Instance
 	cb        func(Event)
-	maxAge    time.Duration
 
 	// A number in range [0,1) used for query scheduling jitter. Regenerated at query time.
 	entropy float64
@@ -86,12 +85,10 @@ type cache struct {
 
 // Create a new cache with an event callback. If maxTTL is non-zero, instances in the cache are capped
 // to the provided duration in seconds.
-func newCache(cb func(Event), maxAge time.Duration) *cache {
+func newCache(cb func(Event)) *cache {
 	return &cache{
 		instances: make(map[string][]*Instance),
-		//instances:  make(map[string]*Instance),
-		cb:     cb,
-		maxAge: maxAge,
+		cb:        cb,
 	}
 }
 
@@ -163,11 +160,7 @@ func (c *cache) Queried() {
 	// second, the intervals between successive queries MUST increase by at least a factor of two.
 	sinceLastQuery := c.now.Sub(c.lastQuery)
 	interval := time.Duration(float64(sinceLastQuery) * float64(1.5+c.entropy)) // 1.5 - 2.5x
-	if interval < minInterval {
-		interval = minInterval
-	} else if interval > maxInterval {
-		interval = maxInterval
-	}
+	interval = min(maxInterval, max(minInterval, interval))
 	c.lastQuery = c.now
 	c.nextPeriodic = c.now.Add(interval)
 	c.refresh()
@@ -194,11 +187,8 @@ func (c *cache) refresh() {
 		// Copy the last instance as authoritative as template for updates etc
 		last := *is[len(is)-1]
 
-		// Inferred ttl
-		ttl := min(c.maxAge, time.Second*time.Duration(last.ttl))
-
 		// If there are expired entries, update list and trigger an update
-		if n := expired(is, c.now, ttl); n > 0 {
+		if n := expired(is, c.now, last.ttl); n > 0 {
 			is = is[n:]
 			last.Addrs = mergeAddrs(is...) // Remaining valid addresses, possibly empty
 
@@ -218,7 +208,7 @@ func (c *cache) refresh() {
 		}
 
 		// Use the first entry to update next expiry
-		firstExpiry := is[0].seenAt.Add(ttl)
+		firstExpiry := is[0].seenAt.Add(last.ttl)
 		if firstExpiry.Before(c.nextExpiry) {
 			c.nextExpiry = firstExpiry
 		}
@@ -229,7 +219,7 @@ func (c *cache) refresh() {
 		}
 
 		// Update next livecheck
-		floatDur := float64(ttl) * (0.80 + c.entropy*0.17) // 80-97% of ttl
+		floatDur := float64(last.ttl) * (0.80 + c.entropy*0.17) // 80-97% of ttl
 		liveCheck := is[0].seenAt.Add(time.Duration(floatDur))
 		if liveCheck.Before(c.nextLivecheck) {
 			c.nextLivecheck = liveCheck

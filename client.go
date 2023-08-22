@@ -16,6 +16,7 @@ type client struct {
 
 	service *Service
 	cache   *cache
+	maxAge  time.Duration
 }
 
 // Browse for all services of a given type, e.g. `_my-service._udp` or `_http._tcp`.
@@ -43,8 +44,9 @@ func Browse(ctx context.Context, serviceStr string, cb func(Event), conf *Config
 	}
 	cl := &client{
 		conn:    conn,
-		cache:   newCache(cb, conf.maxAge()),
+		cache:   newCache(cb),
 		service: service,
+		maxAge:  conf.maxAge(),
 	}
 	return cl.run(ctx)
 }
@@ -112,6 +114,7 @@ loop:
 		c.cache.Advance(now)
 
 		for _, i := range is {
+			i.ttl = min(c.maxAge, i.ttl)
 			// TODO: Debug log when no events are emitted
 			c.cache.Put(i)
 		}
