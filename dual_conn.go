@@ -28,7 +28,7 @@ func ifacesEqual(a, b *Interface) bool {
 }
 
 func (i *Interface) String() string {
-	return fmt.Sprintf("iface %v (%v) %v %v", i.Index, i.Name, i.v4, i.v6)
+	return fmt.Sprintf("%v %v %v", i.Name, i.v4, i.v6)
 }
 
 // Client structure encapsulates both IPv4/IPv6 UDP connections.
@@ -41,26 +41,24 @@ type dualConn struct {
 	ifacesFn func() ([]net.Interface, error)
 }
 
-func newDualConn(ifacesFn func() ([]net.Interface, error), ipType IPType) (*dualConn, error) {
-
-	var (
-		is4, is6   = ipType&IPv4 != 0, ipType&IPv6 != 0
-		err4, err6 error
-	)
-
-	if !(is4 || is6) {
-		return nil, errors.New("invalid ip type")
-	}
+func newDualConn(ifacesFn func() ([]net.Interface, error), network string) (*dualConn, error) {
 
 	c := &dualConn{
 		ifaces:   make(map[int]*Interface),
 		ifacesFn: ifacesFn,
 	}
-	if is4 {
+
+	var err4, err6 error
+	switch network {
+	case "udp":
 		c.c4, err4 = newConn4()
-	}
-	if is6 {
 		c.c6, err6 = newConn6()
+	case "udp4":
+		c.c4, err4 = newConn4()
+	case "udp6":
+		c.c6, err6 = newConn6()
+	default:
+		return nil, errors.New("invalid network")
 	}
 	_, err := c.loadIfaces()
 	if err := errors.Join(err4, err6, err); err != nil {
@@ -113,7 +111,7 @@ func (c *dualConn) conns() (conns []conn) {
 
 // Data receiving routine reads from connection, unpacks packets into dns.Msg
 // structures and sends them to a given msgCh channel
-func (c *dualConn) RunReader(msgCh chan MsgMeta) error {
+func (c *dualConn) RunReader(msgCh chan msgMeta) error {
 	var wg sync.WaitGroup
 	conns := c.conns()
 	errs := make([]error, len(conns))
@@ -129,7 +127,7 @@ func (c *dualConn) RunReader(msgCh chan MsgMeta) error {
 	return errors.Join(errs...)
 }
 
-func recvLoop(c conn, msgCh chan MsgMeta) error {
+func recvLoop(c conn, msgCh chan msgMeta) error {
 	buf := make([]byte, 65536)
 	for {
 		n, src, ifIndex, err := c.ReadMulticast(buf)
@@ -143,7 +141,7 @@ func recvLoop(c conn, msgCh chan MsgMeta) error {
 			slog.Debug("failed to unpack packet", "src", src, "err", err)
 			continue
 		}
-		msgCh <- MsgMeta{msg, srcNetip.Addr().Unmap(), ifIndex}
+		msgCh <- msgMeta{msg, srcNetip.Addr().Unmap(), ifIndex}
 	}
 }
 

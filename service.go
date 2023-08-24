@@ -18,17 +18,30 @@ type Service struct {
 	// Service name, e.g. "_http._tcp"
 	Type string `json:"type"`
 
-	// Service subtypes, e.g. "_printer". If enumerating, only zero or one subtype is allowed.
-	// See RFC 6763 Section 7.1.
+	// Service subtypes, e.g. "_printer". You can publish multiple subtypes, but you can only
+	// browse for at most one. See RFC 6763 Section 7.1.
 	Subtypes []string `json:"subtypes"`
 
 	// Domain should be "local" for mDNS
 	Domain string `json:"domain"`
 }
 
-// Takes a service string on the form _type._proto(.domain)? and turns it into a service.
+func (s *Service) String() string {
+	var sub string
+	if len(s.Subtypes) > 0 {
+		sub = "," + strings.Join(s.Subtypes, ",")
+	}
+	return fmt.Sprintf("%s.%s%s", s.Type, s.Domain, sub)
+}
+
+// Service type should be on the form `_my-service._tcp` or `_my-service._udp`. The default
+// domain is `local`.
+//
+// Add a custom domain and/or subtypes can be provided, e.g.
+// `_my-service._tcp.custom.domain,_printer,_sub1,_sub2` (not recommended).
+//
 // Should be validated afterwards.
-func parseService(service string) *Service {
+func ParseService(service string) *Service {
 	typeParts := strings.Split(service, ",")
 	s := &Service{
 		Type:     typeParts[0],
@@ -132,6 +145,7 @@ func parseInstancePath(s string) (service *Service, instance string, err error) 
 // used to answer multicast queries.
 type Instance struct {
 	// Instance name, e.g. `Mr. Office Printer`  (avoid backslash)
+	// The name should be unique on the network, within the service space.
 	Name string `json:"name"`
 
 	// Port number, must be positive

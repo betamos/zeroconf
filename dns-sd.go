@@ -130,7 +130,7 @@ func answerTo(records, knowns []dns.RR, question dns.Question) (answers, extras 
 
 // Return a single service instance from the msg that matches the "search record" provided.
 // Typically, the search record is a "browsing" record for a service (i.e. no instance).
-func serviceFromRecords(msg *dns.Msg, search *Service) (instances []*Instance) {
+func instancesFromRecords(msg *dns.Msg, search *Service) (instances []*Instance) {
 	// TODO: Support meta-queries
 	var (
 		answers  = append(msg.Answer, msg.Extra...)
@@ -151,6 +151,7 @@ func serviceFromRecords(msg *dns.Msg, search *Service) (instances []*Instance) {
 		switch rr := answer.(type) {
 		// Phase 1: create instances
 		case *dns.PTR:
+			// TODO: Parse service path?
 			if rr.Hdr.Name != question { // match question, e.g. `_printer._sub._http._tcp.`
 				continue
 			}

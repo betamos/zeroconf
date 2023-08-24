@@ -1,23 +1,12 @@
 package zeroconf
 
 import (
-	"context"
+	"math/rand"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
-
-// sleep with cancelation
-func sleepContext(ctx context.Context, d time.Duration) error {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-	case <-timer.C:
-	}
-	return ctx.Err()
-}
 
 var reDDD = regexp.MustCompile(`(\\\d\d\d)+`)
 
@@ -47,4 +36,46 @@ func unescapeDDD(ddd string) string {
 // trimDot is used to trim the dots from the start or end of a string
 func trimDot(s string) string {
 	return strings.TrimRight(s, ".")
+}
+
+// Returns the earliest of at least one times
+func earliest(ts ...time.Time) time.Time {
+	tMin := ts[0]
+	for _, t := range ts {
+		if t.Before(tMin) {
+			tMin = t
+		}
+	}
+	return tMin
+}
+
+type backoff struct {
+	min, max time.Duration // min & max interval
+
+	n            int // The current attempt
+	lastInterval time.Duration
+	next         time.Time // check with now.After(next), then
+}
+
+func newBackoff(min, max time.Duration) *backoff {
+	return &backoff{min: min, max: max}
+}
+
+// Advances to next attempt if enough time has elapsed. Returns true if it succeeded.
+func (b *backoff) advance(now time.Time) bool {
+	if b.next.After(now) {
+		return false
+	}
+	interval := time.Duration(float64(b.lastInterval) * float64(2.0+rand.Float64())) // 2-3 x
+	interval = min(b.max, max(b.min, interval))
+	b.next = now.Add(interval)
+	b.lastInterval = interval
+	b.n += 1
+	return true
+}
+
+func (b *backoff) reset() {
+	b.lastInterval = 0
+	b.n = 0
+	b.next = time.Time{}
 }

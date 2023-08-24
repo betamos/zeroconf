@@ -16,16 +16,17 @@ import (
 )
 
 var (
-	publish = flag.Bool("p", false, "Publish, instead of browse")
-	name    = flag.String("name", "A Regular Instance", "Published instance name.")
+	browse = flag.Bool("b", false, "Browse for instances")
+	name   = flag.String("p", "", "Publish an instance with the given name.")
 
-	service = flag.String("service", "_zeroconf-go._tcp", "Set the service type to browse or publish.")
+	serviceStr = flag.String("service", "_zeroconf-go._tcp", "Set the service type to browse or publish.")
 
 	hostname = flag.String("hostname", "", "Override hostname for the instance.")
 	port     = flag.Int("port", 42424, "Override the port for the instance.")
 	addrs    = flag.String("addrs", "", "Override IP addrs for the instance (comma-separated).")
 
-	maxAge = flag.Int("max-age", 0, "Set the max age in seconds.")
+	network = flag.String("net", "udp", "Change the network to use ipv4 or ipv6 only.")
+	maxAge  = flag.Int("max-age", 60, "Set the max age in seconds.")
 
 	verbose = flag.Bool("v", false, "Verbose mode, with debug output.")
 )
@@ -42,39 +43,52 @@ func main() {
 		log.SetFlags(log.Ltime)
 	}
 
-	conf := &zeroconf.Config{
-		MaxAge: time.Duration(*maxAge) * time.Second,
+	instance := &zeroconf.Instance{
+		Name: *name,
+		Port: uint16(*port),
+		Text: []string{"txtv=0", "lo=1", "la=2"},
+
+		Hostname: *hostname,
 	}
+	if *addrs != "" {
+		for _, addr := range strings.Split(*addrs, ",") {
+			instance.Addrs = append(instance.Addrs, netip.MustParseAddr(addr))
+		}
+	}
+	service := zeroconf.ParseService(*serviceStr)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	opts := zeroconf.New().
+		Logger(slog.Default()).
+		MaxAge(time.Duration(*maxAge) * time.Second).
+		Network(*network)
+
 	var err error
-	if *publish {
-		instance := &zeroconf.Instance{
-			Name: *name,
-			Port: uint16(*port),
-			Text: []string{"txtv=0", "lo=1", "la=2"},
+	if *name != "" {
+		opts.Publish(service, instance)
+		log.Printf("publishing to [%v]: %v\n", service, instance)
 
-			Hostname: *hostname,
-		}
-		if *addrs != "" {
-			for _, addr := range strings.Split(*addrs, ",") {
-				instance.Addrs = append(instance.Addrs, netip.MustParseAddr(addr))
-			}
-		}
-
-		log.Printf("publishing [%v]: %v\n", *service, instance)
-		err = zeroconf.Publish(ctx, instance, *service, nil)
-
-	} else {
-
-		log.Printf("browsing for [%v]\n", *service)
-		err = zeroconf.Browse(ctx, *service, func(event zeroconf.Event) {
-			log.Println(event, event.Addrs)
-		}, conf)
+	}
+	if *browse {
+		opts.Browse(service, func(event zeroconf.Event) {
+			log.Println(event, event.Text, event.Addrs)
+		})
+		log.Printf("browsing for [%v]\n", service)
+	}
+	if !*browse && *name == "" {
+		log.Fatalln("either -p <name> (publish) or -b (browse) must be provided (see -help)")
 	}
 
-	log.Println(err)
+	client, err := opts.Open()
+	if err != nil {
+		log.Fatalln("failed creating client:", err)
+	}
+	<-ctx.Done()
+	client.Close()
 
+	if err != nil {
+		log.Fatalln("failed closing client:", err)
+	}
 }

@@ -8,13 +8,8 @@ import (
 	"time"
 )
 
-const (
-	minInterval = 4 * time.Second
-	maxInterval = time.Hour
-
-	// TODO: Max time window to coalesce changes that occur simultaneously
-	// maxCoalesceDuration = time.Millisecond * 25
-)
+// TODO: Max time window to coalesce changes that occur simultaneously
+// maxCoalesceDuration = time.Millisecond * 25
 
 // An operation that changes the state of the cache.
 type Op int
@@ -78,9 +73,6 @@ type cache struct {
 	// A live check query happens at 80-97% of an instance expiry. To prevent excessive
 	// queries, only instances that responded to the last query are considered for a live check.
 	nextLivecheck time.Time
-
-	// Next periodic query, doubling based on lastQuery and capped at 60 min.
-	nextPeriodic time.Time
 }
 
 // Create a new cache with an event callback. If maxTTL is non-zero, instances in the cache are capped
@@ -149,7 +141,7 @@ func (c *cache) Put(i *Instance) {
 // Returns true if a query should be made right now. Remember to call `Queried()` after the
 // query has been sent.
 func (c *cache) ShouldQuery() bool {
-	return c.nextPeriodic.Before(c.now) || c.nextLivecheck.Before(c.now)
+	return c.nextLivecheck.Before(c.now)
 }
 
 // Should be called once a query has been made.
@@ -158,24 +150,16 @@ func (c *cache) Queried() {
 
 	// RFC6762 Section 5.2: [...] the interval between the first two queries MUST be at least one
 	// second, the intervals between successive queries MUST increase by at least a factor of two.
-	sinceLastQuery := c.now.Sub(c.lastQuery)
-	interval := time.Duration(float64(sinceLastQuery) * float64(1.5+c.entropy)) // 1.5 - 2.5x
-	interval = min(maxInterval, max(minInterval, interval))
 	c.lastQuery = c.now
-	c.nextPeriodic = c.now.Add(interval)
 	c.refresh()
 }
 
 // Returns the time for the next event, either a query or cache expiry
 func (c *cache) NextDeadline() time.Time {
-	soonest := c.nextPeriodic
-	if c.nextExpiry.Before(soonest) {
-		soonest = c.nextExpiry
+	if c.nextLivecheck.Before(c.nextExpiry) {
+		return c.nextLivecheck
 	}
-	if c.nextLivecheck.Before(soonest) {
-		soonest = c.nextLivecheck
-	}
-	return soonest
+	return c.nextExpiry
 }
 
 // Recalculates nextExpiry and nextLivecheck

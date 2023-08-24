@@ -37,7 +37,7 @@ type conn interface {
 	Close() error
 }
 
-type MsgMeta struct {
+type msgMeta struct {
 	*dns.Msg
 	Src netip.Addr
 

@@ -1,142 +1,240 @@
 package zeroconf
 
 import (
-	"context"
 	"errors"
-	"log/slog"
-	"math/rand"
+	"fmt"
+	"net/netip"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
 )
 
-// Client structure encapsulates both IPv4/IPv6 UDP connections.
-type client struct {
+const (
+	// RFC6762 Section 8.3: The Multicast DNS responder MUST send at least two unsolicited
+	// responses
+	announceCount = 4
+
+	// These intervals are for exponential backoff, used for periodic actions like sending queries
+	minInterval = 2 * time.Second
+	maxInterval = time.Hour
+
+	// Enough to send a UDP packet without causing a timeout error
+	writeTimeout = 10 * time.Millisecond
+)
+
+var defaultHostname, _ = os.Hostname()
+
+// A zeroconf client capable of browsing and/or publishing.
+type Client struct {
+	wg   sync.WaitGroup
 	conn *dualConn
-
-	service *Service
-	cache   *cache
-	maxAge  time.Duration
+	opts *Options
 }
 
-// Browse for all services of a given type, e.g. `_my-service._udp` or `_http._tcp`.
-// To browse only for specific subtypes, append it after a comma, e.g. `_my-service._tcp,_printer`.
-// Events are sent to the provided callback.
-// It blocks until the context is canceled (or an error occurs).
-func Browse(ctx context.Context, serviceStr string, cb func(Event), conf *Config) error {
-	// TODO: Possibly construct a query instead of creating this record.
-	if conf == nil {
-		conf = new(Config)
-	}
-	conn, err := newDualConn(conf.interfaces(), conf.ipType())
+// Create a new zeroconf client.
+func newClient(opts *Options) (*Client, error) {
+	conn, err := newDualConn(opts.ifacesFn, opts.network)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	service := parseService(serviceStr)
-	if len(service.Subtypes) > 1 {
-		return errors.New("browsing supports only a single subtype")
-	}
-	if err = service.Validate(); err != nil {
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	cl := &client{
-		conn:    conn,
-		cache:   newCache(cb),
-		service: service,
-		maxAge:  conf.maxAge(),
-	}
-	return cl.run(ctx)
+	c := &Client{conn: conn, opts: opts}
+
+	c.wg.Add(1)
+	c.opts.logger.Debug("open socket", "ifaces", c.conn.ifaces)
+	go c.serve()
+	return c, nil
 }
 
-// Lookup a specific instance of a service.
-func Lookup(ctx context.Context, instanceName, service string, conf *Config) (instance *Instance, err error) {
-	ctx, cancel := context.WithCancel(ctx)
-	err = Browse(ctx, service, func(event Event) {
-		if event.Op == OpAdded && instanceName == event.Name {
-			instance = event.Instance
-			cancel()
-		}
-	}, conf)
-	cancel()
-	return
-}
+// The main loop serving a client
+func (c *Client) serve() error {
+	defer c.wg.Done()
+	c.conn.SetReadDeadline(time.Time{})
 
-func (c *client) run(ctx context.Context) error {
-	// RFC6762 Section 8.3: [...] a Multicast DNS querier SHOULD also delay the first query of
-	// the series by a randomly chosen amount in the range 20-120 ms.
-	if err := sleepContext(ctx, time.Duration(20+rand.Int63n(100))*time.Millisecond); err != nil {
-		return err
-	}
-
-	err := c.mainloop(ctx)
-
-	err = errors.Join(err, c.conn.Close())
-	return err
-}
-
-// Start listeners and waits for the shutdown signal from exit channel
-func (c *client) mainloop(ctx context.Context) error {
-	var (
-		timer = time.NewTimer(0)
-		now   time.Time
-		msgCh = make(chan MsgMeta, 32)
-		is    []*Instance
-	)
-
+	msgCh := make(chan msgMeta, 32)
 	go c.conn.RunReader(msgCh)
+
+	var (
+		bo    = newBackoff(minInterval, maxInterval)
+		timer = time.NewTimer(0)
+	)
 	defer timer.Stop()
 
-	done := ctx.Done()
 loop:
 	for {
+		var (
+			isPeriodic bool
+			now        time.Time
+			msg        *msgMeta
+		)
 		select {
-		case <-done:
-			c.conn.SetReadDeadline(time.Now())
-			done = nil // never canceled
-		case now = <-timer.C:
-		case msg, ok := <-msgCh:
+		case m, ok := <-msgCh:
+			if !timer.Stop() {
+				<-timer.C // Ensure timer is stopped after the `select`
+			}
 			if !ok {
 				break loop
 			}
-			if is = serviceFromRecords(msg.Msg, c.service); len(is) == 0 {
-				continue
-			}
-			// Prepare to operate on the cache below
 			now = time.Now()
-			if !timer.Stop() {
-				<-timer.C
+			msg = &m
+		case now = <-timer.C:
+		}
+
+		isPeriodic = bo.advance(now)
+
+		// Publish initial announcements
+		if c.opts.publisher != nil && isPeriodic && bo.n <= announceCount {
+			err := c.broadcastRecords(false)
+			c.opts.logger.Debug("announce", "err", err)
+		}
+
+		// Handle any queries
+		if c.opts.publisher != nil && msg != nil {
+			_ = c.handleQuery(*msg)
+		}
+
+		// Handle all browser-related maintenance
+		next := bo.next
+		if c.opts.browser != nil {
+			nextBrowserDeadline := c.advanceBrowser(now, msg, isPeriodic)
+			next = earliest(next, nextBrowserDeadline)
+		}
+
+		timer.Reset(next.Sub(now))
+	}
+	return nil
+}
+
+// Unannounces any published instances and then closes the conn.
+func (c *Client) Close() error {
+	c.conn.SetReadDeadline(time.Now())
+	c.wg.Wait()
+	if c.opts.publisher != nil {
+		err := c.broadcastRecords(true)
+		c.opts.logger.Debug("unannounce", "err", err)
+	}
+	return c.conn.Close()
+}
+
+// Generate DNS records with the IPs (A/AAAA) for the provided interface (unless addrs were
+// provided by the user).
+func (c *Client) recordsForIface(iface *Interface, unannounce bool) []dns.RR {
+	// Copy the instance to create a new one with the right ips
+	i := *c.opts.publisher.instance
+
+	if len(i.Addrs) == 0 {
+		i.Addrs = append(i.Addrs, iface.v4...)
+		i.Addrs = append(i.Addrs, iface.v6...)
+	}
+
+	return recordsFromService(c.opts.publisher.service, &i, unannounce)
+}
+
+func (c *Client) handleQuery(msg msgMeta) error {
+	if c.opts.publisher.service == nil {
+		return nil
+	}
+	// RFC6762 Section 8.2: Probing messages are ignored, for now.
+	if len(msg.Ns) > 0 || len(msg.Question) == 0 {
+		return nil
+	}
+
+	// If we can't determine an interface source, we simply reply as if it were sent on all interfaces.
+	var errs []error
+	for _, iface := range c.conn.ifaces {
+		if msg.IfIndex == 0 || msg.IfIndex == iface.Index {
+			if err := c.handleQueryForIface(msg.Msg, iface, msg.Src); err != nil {
+				errs = append(errs, fmt.Errorf("%v %w", iface.Name, err))
 			}
 		}
-
-		c.cache.Advance(now)
-
-		for _, i := range is {
-			i.ttl = min(c.maxAge, i.ttl)
-			// TODO: Debug log when no events are emitted
-			c.cache.Put(i)
-		}
-		is = nil
-
-		if c.cache.ShouldQuery() {
-			_ = c.query() // TODO: Log?
-			c.cache.Queried()
-		}
-
-		// Invariant: the timer is currently stopped, so can be safely reset
-		timer.Reset(c.cache.NextDeadline().Sub(now))
 	}
-	return context.Cause(ctx)
+	return errors.Join(errs...)
+}
+
+// handleQuery is used to handle an incoming query
+func (c *Client) handleQueryForIface(query *dns.Msg, iface *Interface, src netip.Addr) (err error) {
+
+	// TODO: Match quickly against the query without producing full records for each iface.
+	records := c.recordsForIface(iface, false)
+
+	// RFC6762 Section 5.2: Multiple questions in the same message are responded to individually.
+	for _, q := range query.Question {
+
+		// Check that
+		resp := dns.Msg{}
+		resp.SetReply(query)
+		resp.Compress = true
+		resp.RecursionDesired = false
+		resp.Authoritative = true
+		resp.Question = nil // RFC6762 Section 6: "responses MUST NOT contain any questions"
+
+		resp.Answer, resp.Extra = answerTo(records, query.Answer, q)
+		if len(resp.Answer) == 0 {
+			continue
+		}
+
+		c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+		isUnicast := q.Qclass&qClassUnicastResponse != 0
+		if isUnicast {
+			err = c.conn.WriteUnicast(&resp, iface.Index, src)
+		} else {
+			err = c.conn.WriteMulticast(&resp, iface.Index, &src)
+		}
+		c.opts.logger.Debug("respond", "iface", iface.Name, "src", src, "unicast", isUnicast, "err", err)
+	}
+
+	return err
+}
+
+// Broadcast all records to all interfaces. If unannounce is set, the TTLs are zero
+func (c *Client) broadcastRecords(unannounce bool) error {
+	if c.opts.publisher == nil {
+		return nil
+	}
+	var errs []error
+	for _, iface := range c.conn.ifaces {
+		resp := new(dns.Msg)
+		resp.MsgHdr.Response = true
+		resp.MsgHdr.Authoritative = true
+		resp.Compress = true
+		resp.Answer = c.recordsForIface(iface, unannounce)
+
+		c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+		err := c.conn.WriteMulticast(resp, iface.Index, nil)
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+func (c *Client) advanceBrowser(now time.Time, msg *msgMeta, isPeriodic bool) (next time.Time) {
+	c.opts.browser.Advance(now)
+	var is []*Instance
+	if msg != nil {
+		is = instancesFromRecords(msg.Msg, c.opts.browser.service)
+	}
+	for _, i := range is {
+		if c.opts.publisher != nil && i.Name == c.opts.publisher.instance.Name {
+			continue
+		}
+		i.ttl = min(i.ttl, c.opts.maxAge)
+
+		// TODO: Debug log when instances are refreshed?
+		c.opts.browser.Put(i)
+	}
+	if c.opts.browser.ShouldQuery() || isPeriodic {
+		err := c.broadcastQuery()
+		c.opts.logger.Debug("query", "err", err)
+		c.opts.browser.Queried()
+	}
+	return c.opts.browser.NextDeadline()
 }
 
 // Performs the actual query by service name.
-func (c *client) query() error {
-	c.conn.loadIfaces()
+func (c *Client) broadcastQuery() error {
 	m := new(dns.Msg)
 	m.Question = append(m.Question, dns.Question{
-		Name:   c.service.queryName(),
+		Name:   c.opts.browser.service.queryName(),
 		Qtype:  dns.TypePTR,
 		Qclass: dns.ClassINET,
 	})
@@ -148,7 +246,6 @@ func (c *client) query() error {
 	for _, iface := range c.conn.ifaces {
 		c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 		err := c.conn.WriteMulticast(m, iface.Index, nil)
-		slog.Debug("query", "iface", iface.Name, "err", err)
 		errs = append(errs, err)
 	}
 
