@@ -42,6 +42,7 @@ func New() *Options {
 	}
 }
 
+// Checks that the options are sound.
 func (o *Options) Validate() error {
 	if o.browser == nil && o.publisher == nil {
 		return errors.New("either a browser or a publisher must be provided")

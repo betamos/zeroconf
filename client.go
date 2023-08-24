@@ -106,7 +106,8 @@ loop:
 	return nil
 }
 
-// Unannounces any published instances and then closes the conn.
+// Unannounces any published instances and then closes the network conn. No more events are produced
+// after close has returned.
 func (c *Client) Close() error {
 	c.conn.SetReadDeadline(time.Now())
 	c.wg.Wait()
