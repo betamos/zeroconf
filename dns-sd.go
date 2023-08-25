@@ -255,7 +255,7 @@ func recordsFromService(service *Service, instance *Instance, unannounce bool) (
 			Name:   instancePath,
 			Rrtype: dns.TypeSRV,
 			Class:  uniqueRecordClass,
-			Ttl:    defaultTTL,
+			Ttl:    hostRecordTTL,
 		},
 		Port:   instance.Port,
 		Target: hostname,
