@@ -28,9 +28,10 @@ var defaultHostname, _ = os.Hostname()
 
 // A zeroconf client capable of browsing and/or publishing.
 type Client struct {
-	wg   sync.WaitGroup
-	conn *dualConn
-	opts *Options
+	wg     sync.WaitGroup
+	conn   *dualConn
+	opts   *Options
+	reload chan struct{}
 }
 
 // Create a new zeroconf client.
@@ -39,7 +40,7 @@ func newClient(opts *Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{conn: conn, opts: opts}
+	c := &Client{conn: conn, opts: opts, reload: make(chan struct{}, 1)}
 
 	c.wg.Add(1)
 	c.opts.logger.Debug("open socket", "ifaces", c.conn.ifaces)
@@ -68,10 +69,19 @@ loop:
 			now        time.Time
 			msg        *msgMeta
 		)
+		// Note the timer is always stopped after the `select`
 		select {
+		case <-c.reload:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			bo.reset()
+			c.conn.loadIfaces()
+			now = time.Now()
+			c.opts.logger.Debug("reload", "ifaces", c.conn.ifaces)
 		case m, ok := <-msgCh:
 			if !timer.Stop() {
-				<-timer.C // Ensure timer is stopped after the `select`
+				<-timer.C
 			}
 			if !ok {
 				break loop
@@ -104,6 +114,15 @@ loop:
 		timer.Reset(next.Sub(now))
 	}
 	return nil
+}
+
+// Reloads network interfaces and resets the announcement and browsing timers, in order to reach
+// newly available peers. This has no effect if the client is closed.
+func (c *Client) Reload() {
+	select {
+	case c.reload <- struct{}{}:
+	default:
+	}
 }
 
 // Unannounces any published instances and then closes the network conn. No more events are produced
