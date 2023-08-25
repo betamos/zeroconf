@@ -72,13 +72,16 @@ func newDualConn(ifacesFn func() ([]net.Interface, error), network string) (*dua
 func (c *dualConn) loadIfaces() (changed bool, err error) {
 	ifaces := make(map[int]*Interface) // new ifaces
 	netIfaces, err := c.ifacesFn()
+	if err != nil {
+		return false, err
+	}
 	for _, netIface := range netIfaces {
 		if !isMulticastInterface(netIface) {
 			continue
 		}
 		v4, v6, err := netIfaceAddrs(netIface)
 		if err != nil {
-			continue
+			return false, err
 		}
 		iface := &Interface{Interface: netIface}
 		// Join will fail if called multiple times, just attempt for now

@@ -75,18 +75,21 @@ loop:
 			if !timer.Stop() {
 				<-timer.C
 			}
-			bo.reset()
-			c.conn.loadIfaces()
 			now = time.Now()
+			bo.reset()
+			_, err := c.conn.loadIfaces()
+			if err != nil {
+				c.opts.logger.Warn("reload failed (ifaces unchanged)", "err", err)
+			}
 			c.opts.logger.Debug("reload", "ifaces", c.conn.ifaces)
 		case m, ok := <-msgCh:
 			if !timer.Stop() {
 				<-timer.C
 			}
+			now = time.Now()
 			if !ok {
 				break loop
 			}
-			now = time.Now()
 			msg = &m
 		case now = <-timer.C:
 		}
