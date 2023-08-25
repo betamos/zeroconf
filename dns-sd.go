@@ -205,6 +205,27 @@ func instancesFromRecords(msg *dns.Msg, search *Service) (instances []*Instance)
 	return
 }
 
+// Ptr records for an instance
+func ptrRecords(service *Service, instance *Instance, unannounce bool) (records []dns.RR) {
+	var ttl uint32 = 75 * 60
+	if unannounce {
+		ttl = 0
+	}
+	names := service.responderNames()
+	for _, name := range names {
+		records = append(records, &dns.PTR{
+			Hdr: dns.RR_Header{
+				Name:   name,
+				Rrtype: dns.TypePTR,
+				Class:  sharedRecordClass,
+				Ttl:    ttl,
+			},
+			Ptr: instancePath(service, instance),
+		})
+	}
+	return
+}
+
 func recordsFromService(service *Service, instance *Instance, unannounce bool) (records []dns.RR) {
 
 	// RFC6762 Section 10: Records referencing a hostname (SRV/A/AAAA) SHOULD use TTL of 120 s,
@@ -214,25 +235,11 @@ func recordsFromService(service *Service, instance *Instance, unannounce bool) (
 		hostRecordTTL, defaultTTL = 0, 0
 	}
 
-	names := service.responderNames()
 	instancePath := instancePath(service, instance)
 	hostname := instance.hostname()
 
-	// Pre-initialize length for efficiency
-	records = make([]dns.RR, 0, len(names)+len(instance.Addrs)+3)
-
 	// PTR records
-	for _, name := range names {
-		records = append(records, &dns.PTR{
-			Hdr: dns.RR_Header{
-				Name:   name,
-				Rrtype: dns.TypePTR,
-				Class:  sharedRecordClass,
-				Ttl:    defaultTTL,
-			},
-			Ptr: instancePath,
-		})
-	}
+	records = ptrRecords(service, instance, unannounce)
 
 	// RFC 6763 Section 9: Service Type Enumeration.
 	// For this purpose, a special meta-query is defined.  A DNS query for

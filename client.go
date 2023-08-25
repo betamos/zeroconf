@@ -239,6 +239,10 @@ func (c *Client) broadcastQuery() error {
 		Qtype:  dns.TypePTR,
 		Qclass: dns.ClassINET,
 	})
+	if pub := c.opts.publisher; pub != nil {
+		// Include self-published instance as "known answers", to avoid responding to ourselves
+		m.Answer = ptrRecords(pub.service, pub.instance, false)
+	}
 	m.Id = dns.Id()
 	m.Compress = true
 	m.RecursionDesired = false
