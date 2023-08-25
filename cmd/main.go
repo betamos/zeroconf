@@ -28,6 +28,7 @@ var (
 	network = flag.String("net", "udp", "Change the network to use ipv4 or ipv6 only.")
 	maxAge  = flag.Int("max-age", 60, "Set the max age in seconds.")
 	text    = flag.String("text", "", "Text values for the instance (comma-separated).")
+	reload  = flag.Int("reload", 0, "Reload every n seconds. 0 means never.")
 
 	verbose = flag.Bool("v", false, "Verbose mode, with debug output.")
 )
@@ -52,8 +53,8 @@ func main() {
 		Hostname: *hostname,
 	}
 	for _, addr := range split(*addrs) {
-			instance.Addrs = append(instance.Addrs, netip.MustParseAddr(addr))
-		}
+		instance.Addrs = append(instance.Addrs, netip.MustParseAddr(addr))
+	}
 	service := zeroconf.ParseService(*serviceStr)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -84,10 +85,24 @@ func main() {
 	if err != nil {
 		log.Fatalln("failed creating client:", err)
 	}
-	<-ctx.Done()
-	client.Close()
 
-	if err != nil {
+	// Reload periodically. The "empty ticker" blocks forever
+	ticker := new(time.Ticker)
+	if *reload > 0 {
+		ticker = time.NewTicker(time.Duration(*reload) * time.Second)
+	}
+loop:
+	for {
+		select {
+		case <-ctx.Done():
+			break loop
+		case <-ticker.C:
+			client.Reload()
+		}
+	}
+	ticker.Stop()
+
+	if err := client.Close(); err != nil {
 		log.Fatalln("failed closing client:", err)
 	}
 }
