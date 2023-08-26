@@ -2,11 +2,9 @@ package zeroconf
 
 import (
 	"net"
-	"net/netip"
 	"runtime"
 	"time"
 
-	"github.com/miekg/dns"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 )
@@ -26,7 +24,7 @@ var (
 )
 
 // Shared ipv4 and ipv6 multicast ops.
-type conn interface {
+type connx interface {
 	JoinMulticast(net.Interface) error
 	ReadMulticast(buf []byte) (n int, src net.Addr, ifIndex int, err error)
 	WriteMulticast(buf []byte, iface net.Interface) (n int, err error)
@@ -37,29 +35,11 @@ type conn interface {
 	Close() error
 }
 
-type msgMeta struct {
-	*dns.Msg
-	Src netip.Addr
-
-	// The index of the interface the message came from. Note this cannot be trusted fully:
-	//
-	// First, there may be some cases (Windows) where the index isn't provided (and thus, 0).
-	// In those cases, we reply to all interfaces to be safe.
-	//
-	// Secondly, experiments (on Linux w. ethernet and wifi) show that packets sent on
-	// one interface may be received on two interfaces. Thus, we shouldn't use iface index
-	// as a key or for deduplication.
-	//
-	// In short: If an index is non-zero, we reply on the same index. If zero, we
-	// must respond to all indices.
-	IfIndex int
-}
-
 type conn4 struct {
 	*ipv4.PacketConn
 }
 
-var _ conn = &conn4{}
+var _ connx = &conn4{}
 
 func newConn4() (c *conn4, err error) {
 	// IPv4 interfaces
@@ -112,7 +92,7 @@ type conn6 struct {
 	*ipv6.PacketConn
 }
 
-var _ conn = &conn6{}
+var _ connx = &conn6{}
 
 func newConn6() (c *conn6, err error) {
 	// TODO: Use `REUSEPORT`, RFC 6762 section 15.1.

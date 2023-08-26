@@ -29,14 +29,14 @@ var defaultHostname, _ = os.Hostname()
 // A zeroconf client capable of browsing and/or publishing.
 type Client struct {
 	wg     sync.WaitGroup
-	conn   *dualConn
+	conn   *conn
 	opts   *Options
 	reload chan struct{}
 }
 
 // Create a new zeroconf client.
 func newClient(opts *Options) (*Client, error) {
-	conn, err := newDualConn(opts.ifacesFn, opts.network)
+	conn, err := newConn(opts.ifacesFn, opts.network)
 	if err != nil {
 		return nil, err
 	}

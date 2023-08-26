@@ -14,6 +14,24 @@ import (
 	"github.com/miekg/dns"
 )
 
+type msgMeta struct {
+	*dns.Msg
+	Src netip.Addr
+
+	// The index of the interface the message came from. Note this cannot be trusted fully:
+	//
+	// First, there may be some cases (Windows) where the index isn't provided (and thus, 0).
+	// In those cases, we reply to all interfaces to be safe.
+	//
+	// Secondly, experiments (on Linux w. ethernet and wifi) show that packets sent on
+	// one interface may be received on two interfaces. Thus, we shouldn't use iface index
+	// as a key or for deduplication.
+	//
+	// In short: If an index is non-zero, we reply on the same index. If zero, we
+	// must respond to all indices.
+	IfIndex int
+}
+
 type Interface struct {
 	net.Interface
 	v4, v6 []netip.Addr // If no addr, the iface is ignored while communicating
@@ -32,18 +50,18 @@ func (i *Interface) String() string {
 }
 
 // Client structure encapsulates both IPv4/IPv6 UDP connections.
-type dualConn struct {
+type conn struct {
 	c4     *conn4
 	c6     *conn6
 	ifaces map[int]*Interface // key: iface.Index
 
-	// Used initially and on reload to filter interfaces to use, default = net.Interfaces
+	// Used initially and on reload to filter interfaces to use
 	ifacesFn func() ([]net.Interface, error)
 }
 
-func newDualConn(ifacesFn func() ([]net.Interface, error), network string) (*dualConn, error) {
+func newConn(ifacesFn func() ([]net.Interface, error), network string) (*conn, error) {
 
-	c := &dualConn{
+	c := &conn{
 		ifaces:   make(map[int]*Interface),
 		ifacesFn: ifacesFn,
 	}
@@ -69,7 +87,7 @@ func newDualConn(ifacesFn func() ([]net.Interface, error), network string) (*dua
 }
 
 // Load (or reload) ifaces and return whether anything (addresses in particular) have changed.
-func (c *dualConn) loadIfaces() (changed bool, err error) {
+func (c *conn) loadIfaces() (changed bool, err error) {
 	ifaces := make(map[int]*Interface) // new ifaces
 	netIfaces, err := c.ifacesFn()
 	if err != nil {
@@ -102,7 +120,7 @@ func (c *dualConn) loadIfaces() (changed bool, err error) {
 	return changed, err
 }
 
-func (c *dualConn) conns() (conns []conn) {
+func (c *conn) conns() (conns []connx) {
 	if c.c4 != nil {
 		conns = append(conns, c.c4)
 	}
@@ -114,7 +132,7 @@ func (c *dualConn) conns() (conns []conn) {
 
 // Data receiving routine reads from connection, unpacks packets into dns.Msg
 // structures and sends them to a given msgCh channel
-func (c *dualConn) RunReader(msgCh chan msgMeta) error {
+func (c *conn) RunReader(msgCh chan msgMeta) error {
 	var wg sync.WaitGroup
 	conns := c.conns()
 	errs := make([]error, len(conns))
@@ -130,7 +148,7 @@ func (c *dualConn) RunReader(msgCh chan msgMeta) error {
 	return errors.Join(errs...)
 }
 
-func recvLoop(c conn, msgCh chan msgMeta) error {
+func recvLoop(c connx, msgCh chan msgMeta) error {
 	buf := make([]byte, 65536)
 	for {
 		n, src, ifIndex, err := c.ReadMulticast(buf)
@@ -148,7 +166,7 @@ func recvLoop(c conn, msgCh chan msgMeta) error {
 	}
 }
 
-func (c *dualConn) WriteUnicast(msg *dns.Msg, ifIndex int, dst netip.Addr) (err error) {
+func (c *conn) WriteUnicast(msg *dns.Msg, ifIndex int, dst netip.Addr) (err error) {
 	buf, err := msg.Pack()
 	if err != nil {
 		return err
@@ -165,7 +183,7 @@ func (c *dualConn) WriteUnicast(msg *dns.Msg, ifIndex int, dst netip.Addr) (err 
 }
 
 // Dst addr is only used for ipv4/ipv6 selection. Use nil to write on both.
-func (c *dualConn) WriteMulticast(msg *dns.Msg, ifIndex int, dst *netip.Addr) (err error) {
+func (c *conn) WriteMulticast(msg *dns.Msg, ifIndex int, dst *netip.Addr) (err error) {
 	buf, err := msg.Pack()
 	if err != nil {
 		return err
@@ -188,7 +206,7 @@ func (c *dualConn) WriteMulticast(msg *dns.Msg, ifIndex int, dst *netip.Addr) (e
 	return errors.Join(err4, err6)
 }
 
-func (c *dualConn) SetDeadline(dl time.Time) error {
+func (c *conn) SetDeadline(dl time.Time) error {
 	var errs []error
 	for _, conn := range c.conns() {
 		errs = append(errs, conn.SetDeadline(dl))
@@ -196,7 +214,7 @@ func (c *dualConn) SetDeadline(dl time.Time) error {
 	return errors.Join(errs...)
 }
 
-func (c *dualConn) SetReadDeadline(dl time.Time) error {
+func (c *conn) SetReadDeadline(dl time.Time) error {
 	var errs []error
 	for _, conn := range c.conns() {
 		errs = append(errs, conn.SetReadDeadline(dl))
@@ -204,7 +222,7 @@ func (c *dualConn) SetReadDeadline(dl time.Time) error {
 	return errors.Join(errs...)
 }
 
-func (c *dualConn) SetWriteDeadline(dl time.Time) error {
+func (c *conn) SetWriteDeadline(dl time.Time) error {
 	var errs []error
 	for _, conn := range c.conns() {
 		errs = append(errs, conn.SetWriteDeadline(dl))
@@ -212,7 +230,7 @@ func (c *dualConn) SetWriteDeadline(dl time.Time) error {
 	return errors.Join(errs...)
 }
 
-func (c *dualConn) Close() error {
+func (c *conn) Close() error {
 	var errs []error
 	for _, conn := range c.conns() {
 		errs = append(errs, conn.Close())
