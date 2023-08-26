@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -65,7 +66,8 @@ func (o *Options) Validate() error {
 // Addrs and Hostname are determined automatically, but can be overriden.
 func (o *Options) Publish(s *Service, i *Instance) *Options {
 	if i.Hostname == "" {
-		i.Hostname = fmt.Sprintf("%v.%v", defaultHostname, s.Domain)
+		hostname, _ := strings.CutSuffix(defaultHostname, ".local")
+		i.Hostname = fmt.Sprintf("%v.%v", hostname, s.Domain)
 	}
 	o.publisher = &publisher{s, i}
 	return o
