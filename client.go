@@ -93,6 +93,10 @@ loop:
 			msg = &m
 		case now = <-timer.C:
 		}
+		// Use wall time exclusively in order to restore accurate state when waking from sleep,
+		// (time jumps forward) such as cache expiry. However, the user still needs to monitor time
+		// and reload in order to reset the periodic announcements and queries.
+		now = now.Round(0)
 
 		isPeriodic = bo.advance(now)
 

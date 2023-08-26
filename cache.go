@@ -51,6 +51,8 @@ func (e Event) String() string {
 // The cache maintains a map of service instances and notifies the user of changes.
 // It relies on both the current time and query times in order to
 // expire instances and inform when new queries are needed.
+// The cache should use wall-clock time and will automatically adjust for unexpected jumps
+// backwards in time.
 type cache struct {
 	// map from instance name to a slice of "unique" instance records for the same instance,
 	// in case there are multiple announcements. the "authoritative" record is the last one,
@@ -171,19 +173,19 @@ func (c *cache) refresh() {
 		// Copy the last instance as authoritative as template for updates etc
 		last := *is[len(is)-1]
 
-		// If there are expired entries, update list and trigger an update
+		// If there are expired instances, update list and trigger an update
 		if n := expired(is, c.now, last.ttl); n > 0 {
 			is = is[n:]
 			last.Addrs = mergeAddrs(is...) // Remaining valid addresses, possibly empty
 
-			// All entries expired, so we remove
+			// All instances expired, so we remove
 			if len(is) == 0 {
 				delete(c.instances, k)
 				c.cb(Event{&last, OpRemoved})
 				continue
 			}
 
-			// Some entries remain, so we update
+			// Some instances remain, so we update
 
 			// Modifying a map entry during iteration is totally kosher but Go spec insists on
 			// making that hard to find because "it's too obvious"... Well
@@ -191,7 +193,7 @@ func (c *cache) refresh() {
 			c.cb(Event{&last, OpUpdated})
 		}
 
-		// Use the first entry to update next expiry
+		// Use the first instance to update next expiry
 		firstExpiry := is[0].seenAt.Add(last.ttl)
 		if firstExpiry.Before(c.nextExpiry) {
 			c.nextExpiry = firstExpiry
@@ -220,15 +222,19 @@ func mergeAddrs(is ...*Instance) (addrs []netip.Addr) {
 	return slices.Compact(addrs)
 }
 
-// Returns the number of expired entries
+// Returns the number of expired instances.
+// While we're at it, adjust for unexpected time jumps.
 func expired(is []*Instance, now time.Time, ttl time.Duration) (n int) {
 	for _, i := range is {
+		// Ensure that seenAt is before now (in the rare case wall time jumped backwards)
+		if i.seenAt.After(now) {
+			i.seenAt = now
+		}
 		// If expired, remove instantly
 		expiry := i.seenAt.Add(ttl)
-		if expiry.After(now) { // no more expired entries
-			break
+		if expiry.Before(now) { // no more expired entries
+			n++
 		}
-		n++
 	}
 	return n
 }
