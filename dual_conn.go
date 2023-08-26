@@ -247,8 +247,14 @@ func netIfaceAddrs(iface net.Interface) (v4, v6 []netip.Addr, err error) {
 			}
 		}
 	}
-	if len(v6) == 0 {
-		v6 = v6local
-	}
+	// 1 ip of each type is enough
+	v4, v6 = max1(v4), append(max1(v6), max1(v6local)...)
 	return
+}
+
+func max1[T any](slice []T) []T {
+	if len(slice) > 1 {
+		return slice[1:]
+	}
+	return slice
 }
