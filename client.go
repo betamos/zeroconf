@@ -146,7 +146,7 @@ func (c *Client) Close() error {
 
 // Generate DNS records with the IPs (A/AAAA) for the provided interface (unless addrs were
 // provided by the user).
-func (c *Client) recordsForIface(iface *Interface, unannounce bool) []dns.RR {
+func (c *Client) recordsForIface(iface *connInterface, unannounce bool) []dns.RR {
 	// Copy the instance to create a new one with the right ips
 	i := *c.opts.publisher.instance
 
@@ -180,7 +180,7 @@ func (c *Client) handleQuery(msg msgMeta) error {
 }
 
 // handleQuery is used to handle an incoming query
-func (c *Client) handleQueryForIface(query *dns.Msg, iface *Interface, src netip.Addr) (err error) {
+func (c *Client) handleQueryForIface(query *dns.Msg, iface *connInterface, src netip.Addr) (err error) {
 
 	// TODO: Match quickly against the query without producing full records for each iface.
 	records := c.recordsForIface(iface, false)

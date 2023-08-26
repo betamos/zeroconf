@@ -32,20 +32,21 @@ type msgMeta struct {
 	IfIndex int
 }
 
-type Interface struct {
+// An network interface and its addrs (the name `interface` is reserved).
+type connInterface struct {
 	net.Interface
-	v4, v6 []netip.Addr // If no addr, the iface is ignored while communicating
+	v4, v6 []netip.Addr
 }
 
 // Heuristically compare whether an interface has changed, which can trigger other reactions.
-func ifacesEqual(a, b *Interface) bool {
+func ifacesEqual(a, b *connInterface) bool {
 	if a.Index != b.Index || a.Flags != b.Flags || a.Name != b.Name || a.MTU != b.MTU {
 		return false
 	}
 	return slices.Equal(a.v4, b.v4) && slices.Equal(a.v6, b.v6)
 }
 
-func (i *Interface) String() string {
+func (i *connInterface) String() string {
 	return fmt.Sprintf("%v %v %v", i.Name, i.v4, i.v6)
 }
 
@@ -53,7 +54,7 @@ func (i *Interface) String() string {
 type conn struct {
 	c4     *conn4
 	c6     *conn6
-	ifaces map[int]*Interface // key: iface.Index
+	ifaces map[int]*connInterface // key: iface.Index
 
 	// Used initially and on reload to filter interfaces to use
 	ifacesFn func() ([]net.Interface, error)
@@ -62,7 +63,7 @@ type conn struct {
 func newConn(ifacesFn func() ([]net.Interface, error), network string) (*conn, error) {
 
 	c := &conn{
-		ifaces:   make(map[int]*Interface),
+		ifaces:   make(map[int]*connInterface),
 		ifacesFn: ifacesFn,
 	}
 
@@ -88,7 +89,7 @@ func newConn(ifacesFn func() ([]net.Interface, error), network string) (*conn, e
 
 // Load (or reload) ifaces and return whether anything (addresses in particular) have changed.
 func (c *conn) loadIfaces() (changed bool, err error) {
-	ifaces := make(map[int]*Interface) // new ifaces
+	ifaces := make(map[int]*connInterface) // new ifaces
 	netIfaces, err := c.ifacesFn()
 	if err != nil {
 		return false, err
@@ -101,7 +102,7 @@ func (c *conn) loadIfaces() (changed bool, err error) {
 		if err != nil {
 			return false, err
 		}
-		iface := &Interface{Interface: netIface}
+		iface := &connInterface{Interface: netIface}
 		// Join will fail if called multiple times, just attempt for now
 		if c.c4 != nil && len(v4) > 0 {
 			c.c4.JoinMulticast(netIface)
