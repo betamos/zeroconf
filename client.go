@@ -26,7 +26,7 @@ const (
 
 var defaultHostname, _ = os.Hostname()
 
-// A zeroconf client capable of browsing and/or publishing.
+// A client which publishes and/or browses for instances.
 type Client struct {
 	wg     sync.WaitGroup
 	conn   *conn
@@ -123,7 +123,7 @@ loop:
 	return nil
 }
 
-// Reloads network interfaces and resets the announcement and browsing timers, in order to reach
+// Reloads network interfaces and resets backoff timers, in order to reach
 // newly available peers. This has no effect if the client is closed.
 func (c *Client) Reload() {
 	select {
@@ -133,7 +133,7 @@ func (c *Client) Reload() {
 }
 
 // Unannounces any published instances and then closes the network conn. No more events are produced
-// after close has returned.
+// afterwards.
 func (c *Client) Close() error {
 	c.conn.SetReadDeadline(time.Now())
 	c.wg.Wait()

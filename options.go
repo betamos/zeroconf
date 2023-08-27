@@ -62,7 +62,7 @@ func (o *Options) Validate() error {
 	return errors.Join(errs...)
 }
 
-// Publish an instance of a service. Name and Port are required, while Text is optional.
+// Publish an instance of a service. Name and Port are required.
 // Addrs and Hostname are determined automatically, but can be overriden.
 func (o *Options) Publish(s *Service, i *Instance) *Options {
 	if i.Hostname == "" {
@@ -92,8 +92,8 @@ func (o *Options) MaxAge(age time.Duration) *Options {
 	return o
 }
 
-// Change the network to use "udp" (default), "udp4" or "udp6". This will affect self-announcement
-// addresses, but addrs received from others while browsing can still be either type.
+// Change the network to use "udp" (default), "udp4" or "udp6". This will affect self-announced
+// addresses, but those received from others can still be either type.
 func (o *Options) Network(network string) *Options {
 	o.network = network
 	return o

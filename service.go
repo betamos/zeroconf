@@ -11,18 +11,18 @@ import (
 	"github.com/miekg/dns"
 )
 
-// Service contains the basic description of a service.
-// It is used both in responding and enumerating.
+// A service identifies an application or protocol, e.g. a http server, printer or an IoT device.
 type Service struct {
 
-	// Service name, e.g. "_http._tcp"
+	// Service name and protocol, on the form `_my-service._tcp` or `_my-service._udp`
 	Type string `json:"type"`
 
-	// Service subtypes, e.g. "_printer". You can publish multiple subtypes, but you can only
-	// browse for at most one. See RFC 6763 Section 7.1.
+	// Service subtypes, e.g. `_printer`. An instance can be published with multiple subtypes.
+	// While browsing, a single subtype can be specified to narrow the query.
+	// See RFC 6763 Section 7.1.
 	Subtypes []string `json:"subtypes"`
 
-	// Domain should be "local" for mDNS
+	// Domain should be `local`
 	Domain string `json:"domain"`
 }
 
@@ -37,7 +37,7 @@ func (s *Service) String() string {
 // Service type should be on the form `_my-service._tcp` or `_my-service._udp`. The default
 // domain is `local`.
 //
-// Add a custom domain and/or subtypes can be provided, e.g.
+// A custom domain and/or subtypes can be provided, e.g.
 // `_my-service._tcp.custom.domain,_printer,_sub1,_sub2` (not recommended).
 //
 // Should be validated afterwards.
@@ -140,27 +140,25 @@ func parseInstancePath(s string) (service *Service, instance string, err error) 
 	return service, instance, nil
 }
 
-// Instance represents a browse/lookup result for client API.
-// It is also used to configure service registration (server API), which is
-// used to answer multicast queries.
+// An instance of a specific service on the local network. It is reachable at the advertised
+// addresses and port number.
 type Instance struct {
-	// Instance name, e.g. `Mr. Office Printer`  (avoid backslash)
-	// The name should be unique on the network, within the service space.
+	// A name that identifies the instance within the service space, e.g. `Office Printer`
 	Name string `json:"name"`
 
-	// Port number, must be positive
+	// A non-zero port number
 	Port uint16 `json:"port"`
-
-	// Optional additional text (avoid backslash)
-	Text []string `json:"text"`
 
 	// Hostname, e.g. `Bryans-Mac.local`
 	Hostname string `json:"hostname"`
 
-	// IP addresses
+	// A set of IP addresses
 	Addrs []netip.Addr `json:"addrs"`
 
-	// Internal expiry info used by cache
+	// Optional additional data
+	Text []string `json:"text"`
+
+	// Internal expiry data
 	ttl    time.Duration
 	seenAt time.Time
 }

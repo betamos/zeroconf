@@ -11,18 +11,18 @@ import (
 // TODO: Max time window to coalesce changes that occur simultaneously
 // maxCoalesceDuration = time.Millisecond * 25
 
-// An operation that changes the state of the cache.
+// A state change operation.
 type Op int
 
 const (
-	// An instance was discovered.
+	// An instance was added.
 	OpAdded Op = iota
 
-	// An instance was updated, which contains the latest info, and all non-expired addrs.
-	// An instance that keeps refreshing itself before expiry does not cause an update.
+	// A previously added instance is updated, such as a new set of addrs.
+	// Note that regular TTL refreshes do not trigger updates.
 	OpUpdated
 
-	// An instance expired or was intentionally removed. Note that there are no addrs with this op.
+	// An instance expired or was unannounced. There are no addresses associated with this op.
 	OpRemoved
 )
 
@@ -39,9 +39,13 @@ func (op Op) String() string {
 	}
 }
 
+// An event represents a change in the state of an instance, identified by its name.
+// The instance reflects the new state and is always non-nil. If an instance is found on multiple
+// network interfaces with different addresses, they are merged and reflected as updates according
+// to their individual life cycles.
 type Event struct {
 	*Instance
-	Op Op
+	Op
 }
 
 func (e Event) String() string {
