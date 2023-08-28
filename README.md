@@ -1,110 +1,111 @@
-ZeroConf: Service Discovery with mDNS
-=====================================
+Zeroconf Service Discovery
+==========================
+[![GoDoc](https://godoc.org/github.com/betamos/zeroconf?status.svg)](https://godoc.org/github.com/betamos/zeroconf)
+[![Tests](https://github.com/betamos/zeroconf/actions/workflows/go-test.yml/badge.svg)](https://github.com/libp2p/zeroconf/actions/workflows/go-test.yml)
 
-NOTE: This is just a fork with some added features and fixes due to upstreaming difficulty.
+Zeroconf is a pure Golang library for discovering and publishing services on the local network.
 
-ZeroConf is a pure Golang library that employs Multicast DNS-SD for
+It is tested on Windows, macOS and Linux and is compatible with [Avahi](http://avahi.org/),
+[Bonjour](https://developer.apple.com/bonjour/), etc. It implements:
 
-* browsing and resolving services in your network
-* registering own services
+- [RFC 6762](https://tools.ietf.org/html/rfc6762): Multicast DNS (mDNS)
+- [RFC 6763](https://tools.ietf.org/html/rfc6763): DNS Service Discovery (DNS-SD)
 
-in the local network.
+## Usage
 
-It basically implements aspects of the standards
-[RFC 6762](https://tools.ietf.org/html/rfc6762) (mDNS) and
-[RFC 6763](https://tools.ietf.org/html/rfc6763) (DNS-SD).
-Though it does not support all requirements yet, the aim is to provide a compliant solution in the long-term with the community.
+First, let's install the library:
 
-By now, it should be compatible to [Avahi](http://avahi.org/) (tested) and Apple's Bonjour (untested).
-Target environments: private LAN/Wifi, small or isolated networks.
-
-[![GoDoc](https://godoc.org/github.com/libp2p/zeroconf?status.svg)](https://godoc.org/github.com/libp2p/zeroconf)
-[![Go Report Card](https://goreportcard.com/badge/github.com/libp2p/zeroconf)](https://goreportcard.com/report/github.com/libp2p/zeroconf)
-[![Tests](https://github.com/libp2p/zeroconf/actions/workflows/go-test.yml/badge.svg)](https://github.com/libp2p/zeroconf/actions/workflows/go-test.yml)
-
-## Install
-Nothing is as easy as that:
 ```bash
-$ go get -u github.com/libp2p/zeroconf/v2
+$ go get -u github.com/betamos/zeroconf
 ```
 
-## Browse for services in your local network
+Then, let's import the library and define a service type:
 
 ```go
-instances := make(chan *zeroconf.Instance)
-go func(results <-chan *zeroconf.Instance) {
-    for instance := range results {
-        log.Println(instance)
-    }
-    log.Println("No more instances.")
-}(instances)
+import "github.com/betamos/zeroconf"
 
-ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
-defer cancel()
-// Discover all services on the network (e.g. _workstation._tcp)
-err = zeroconf.Browse(ctx, "_workstation._tcp", "local.", instances)
+var chat = zeroconf.NewType("_chat._tcp")
+```
+
+Now, let's announce our own presence and find others we can chat with:
+
+```go
+// This is the chat service running on this machine
+self := zeroconf.NewService(chat, "Jennifer", 8080)
+
+client, err := zeroconf.New().
+    Publish(self).
+    Browse(chat, func(e zeroconf.Event) {
+        // Prints e.g. `[+] Bryan`, but this would be a good time to connect to the peer!
+        log.Println(e.Op, e.Name)
+    })
+    .Open()
 if err != nil {
-    log.Fatalln("Failed to browse:", err.Error())
+    return err
 }
-
-<-ctx.Done()
+defer client.Close() // Don't forget to close, to notify others that we're going away
 ```
-A subtype may added to service name to narrow the set of results. E.g. to browse `_workstation._tcp` with subtype `_windows`, use`_workstation._tcp,_windows`.
 
-See https://github.com/libp2p/zeroconf/blob/master/examples/resolv/client.go.
+## CLI
 
-## Lookup a specific service instance
+The package contains a CLI which can both browse and publish:
+
+```bash
+# Browse and publish at the same time (run on two different machines)
+go run ./cmd -b -p "Computer A"
+go run ./cmd -b -p "Computer B"
+
+# Or why not find some Apple devices?
+go run ./cmd -b -type _rdlink._tcp
+```
+
+You should see services coming and going, like so:
+
+```
+01:23:45 [+] Someone's iPhone ...
+01:23:47 [+] Some Macbook ...
+01:26:45 [-] Someone's iPhone ...
+```
+
+## Features
+
+* [x] Publish and browse on the same UDP port
+* [x] Monitors for updates, expiry and unannouncements of services
+* [x] Handles IPv4 and IPv6 on multiple network interfaces
+* [x] Minimal network traffic
+* [x] Hot-reload after network changes or sleeping (see below)
+* [x] Uses modern Go 1.21 with `slog`, `netip`, etc
+
+## Hot-reloading
+
+Some devices, like laptops, move around a lot. Whenever a device connects to a new network,
+or wakes up after sleep, the zeroconf client needs to be aware of these changes for both
+browsing and publishing to work correctly:
 
 ```go
-// Example filled soon.
+// Reloads network interfaces and resets periodic timers
+client.Reload()
 ```
 
-## Register a service
+Monitoring for changes is out of scope for this project. You could use a ticker and reload
+every N minutes.
 
-```go
-server, err := zeroconf.Register("GoZeroconf", "_workstation._tcp", "local.", 42424, []string{"txtv=0", "lo=1", "la=2"}, nil)
-if err != nil {
-    panic(err)
-}
-defer server.Shutdown()
+## Missing features
 
-// Clean exit.
-sig := make(chan os.Signal, 1)
-signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-select {
-case <-sig:
-    // Exit by user
-case <-time.After(time.Second * 120):
-    // Exit by timeout
-}
+- **Conflict resolution** is not implemented, so it's important to pick a unique service name to
+  avoid name collisions. If you don't have a unique persistent identifier, you could add randomized
+  suffix, e.g "Jennifer [3298]".
+- **One-shot queries** (lookup) is currently not supported. As a workaround, you can browse
+  and filter out the instance yourself.
+- **Meta-queries** are also not supported.
 
-log.Println("Shutting down.")
-```
-Multiple subtypes may be added to service name, separated by commas. E.g `_workstation._tcp,_windows` has subtype `_windows`.
+## About
 
-See https://github.com/libp2p/zeroconf/blob/master/examples/register/server.go.
+This project is a near-complete rewrite by Didrik Nordström in 2023.
+However, archeologists will find a long lineage:
 
-## Features and ToDo's
-This list gives a quick impression about the state of this library.
-See what needs to be done and submit a pull request :)
-
-* [x] Browse / Lookup / Register services
-* [x] Multiple IPv6 / IPv4 addresses support
-* [x] Send multiple probes (exp. back-off) if no service answers (*)
-* [x] Timestamp instances for TTL checks
-* [ ] Compare new multicasts with already received services
-
-_Notes:_
-
-(*) The denoted features might not be perfectly standards compliant, but shouldn't cause any problems.
-    Some tests showed improvements in overall robustness and performance with the features enabled.
-
-## Credits
-Great thanks to [hashicorp](https://github.com/hashicorp/mdns) and to [oleksandr](https://github.com/oleksandr/bonjour) and all contributing authors for the code this projects bases upon.
-Large parts of the code are still the same.
-
-However, there are several reasons why I decided to create a fork of the original project:
-The previous project seems to be unmaintained. There are several useful pull requests waiting. I merged most of them in this project.
-Still, the implementation has some bugs and lacks some other features that make it quite unreliable in real LAN environments when running continously.
-Last but not least, the aim for this project is to build a solution that targets standard conformance in the long term with the support of the community.
-Though, resiliency should remain a top goal.
+- [hashicorp/mdns](https://github.com/hashicorp/mdns)
+- [oleksandr/bonjour](https://github.com/oleksandr/bonjour)
+- [grandcat/zeroconf](https://github.com/grandcat/zeroconf)
+- [libp2p/zeroconf](https://github.com/libp2p/zeroconf)
+- [betamos/zeroconf](https://github.com/betamos/zeroconf) <- You are here
