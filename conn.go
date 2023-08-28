@@ -16,7 +16,11 @@ import (
 
 type msgMeta struct {
 	*dns.Msg
-	Src netip.Addr
+
+	// Source addr-port, which is mainly important when replying.
+	// If a unicast response is requested, we reply to non-mdns ports.
+	// If multicast, we only need to "reply" over either IPv4 or IPv6, depending on the src.
+	Src netip.AddrPort
 
 	// The index of the interface the message came from. Note this cannot be trusted fully:
 	//
@@ -156,26 +160,26 @@ func recvLoop(c connx, msgCh chan msgMeta) error {
 		if err != nil {
 			return err
 		}
-		srcNetip := src.(*net.UDPAddr).AddrPort()
+		netipSrc := src.(*net.UDPAddr).AddrPort()
 
 		msg := new(dns.Msg)
 		if err := msg.Unpack(buf[:n]); err != nil {
 			slog.Debug("failed to unpack packet", "src", src, "err", err)
 			continue
 		}
-		msgCh <- msgMeta{msg, srcNetip.Addr().Unmap(), ifIndex}
+		msgCh <- msgMeta{msg, netipSrc, ifIndex}
 	}
 }
 
-func (c *conn) WriteUnicast(msg *dns.Msg, ifIndex int, dst netip.Addr) (err error) {
+func (c *conn) WriteUnicast(msg *dns.Msg, ifIndex int, dst netip.AddrPort) (err error) {
 	buf, err := msg.Pack()
 	if err != nil {
 		return err
 	}
-	dstUdp := net.UDPAddrFromAddrPort(netip.AddrPortFrom(dst, mdnsPort))
-	if c.c4 != nil && dst.Is4() {
+	dstUdp := net.UDPAddrFromAddrPort(dst)
+	if c.c4 != nil && dst.Addr().Is4() {
 		_, err = c.c4.WriteUnicast(buf, ifIndex, dstUdp)
-	} else if c.c6 != nil && dst.Is6() {
+	} else if c.c6 != nil && dst.Addr().Is6() {
 		_, err = c.c6.WriteUnicast(buf, ifIndex, dstUdp)
 	} else {
 		err = fmt.Errorf("no suitable conn unicast msg: ifIndex=%v dst=%v", ifIndex, dst)
@@ -184,7 +188,7 @@ func (c *conn) WriteUnicast(msg *dns.Msg, ifIndex int, dst netip.Addr) (err erro
 }
 
 // Dst addr is only used for ipv4/ipv6 selection. Use nil to write on both.
-func (c *conn) WriteMulticast(msg *dns.Msg, ifIndex int, dst *netip.Addr) (err error) {
+func (c *conn) WriteMulticast(msg *dns.Msg, ifIndex int, dst *netip.AddrPort) (err error) {
 	buf, err := msg.Pack()
 	if err != nil {
 		return err
@@ -195,7 +199,7 @@ func (c *conn) WriteMulticast(msg *dns.Msg, ifIndex int, dst *netip.Addr) (err e
 	}
 	is4, is6 := true, true
 	if dst != nil {
-		is4, is6 = dst.Is4(), dst.Is6()
+		is4, is6 = dst.Addr().Is4(), dst.Addr().Is6()
 	}
 	var err4, err6 error
 	if len(iface.v4) > 0 && is4 {
@@ -259,11 +263,11 @@ func netIfaceAddrs(iface net.Interface) (v4, v6 []netip.Addr, err error) {
 		if ip.Is4() {
 			v4 = append(v4, ip)
 		} else if ip.Is6() && ip.IsGlobalUnicast() {
-				v6 = append(v6, ip)
+			v6 = append(v6, ip)
 		} else if ip.Is6() && ip.IsLinkLocalUnicast() {
-				v6local = append(v6local, ip)
-			}
+			v6local = append(v6local, ip)
 		}
+	}
 	v4 = max1(v4) // 1 ip of each type is enough
 	v6 = append(max1(v6), max1(v6local)...)
 	return

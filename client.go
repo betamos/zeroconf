@@ -177,7 +177,7 @@ func (c *Client) handleQuery(msg msgMeta) error {
 }
 
 // handleQuery is used to handle an incoming query
-func (c *Client) handleQueryForIface(query *dns.Msg, iface *connInterface, src netip.Addr) (err error) {
+func (c *Client) handleQueryForIface(query *dns.Msg, iface *connInterface, src netip.AddrPort) (err error) {
 
 	// TODO: Match quickly against the query without producing full records for each iface.
 	records := c.recordsForIface(iface, false)
