@@ -140,14 +140,11 @@ func (s *Service) Validate() error {
 	if err := s.Type.Validate(); err != nil {
 		return err
 	}
-	if s.Hostname == "" {
+	if s.Name == "" {
 		return errors.New("no name specified")
 	}
 	if s.Hostname == "" {
 		return errors.New("no hostname specified")
-	}
-	if s.Port == 0 {
-		return errors.New("port is 0")
 	}
 	return nil
 }
