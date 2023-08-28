@@ -5,17 +5,17 @@ import (
 )
 
 func TestParseServicePath(t *testing.T) {
-	ty, name, err := parseServicePath("A\\ Device._service._tcp.local.")
+	svc, err := parseServicePath("A\\ Device._service._tcp.local.")
 	if err != nil {
 		t.Fatalf("parsing failed: %v", err)
 	}
-	if name != "A Device" {
+	if svc.Name != "A Device" {
 		t.Fatalf("service mismatch")
 	}
-	if ty.Name != "_service._tcp" {
+	if svc.Type.Name != "_service._tcp" {
 		t.Fatalf("service mismatch")
 	}
-	if ty.Domain != "local" {
+	if svc.Type.Domain != "local" {
 		t.Fatalf("domain mismatch")
 	}
 }

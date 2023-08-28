@@ -7,28 +7,35 @@ import (
 )
 
 var (
-	testService = &Service{
-		Name:     "test-name",
-		Port:     8888,
-		Hostname: "test-hostname",
-	}
 	testType    = NewType("_test-zeroconf-go._tcp")
 	testSubtype = NewType("_test-zeroconf-go._tcp,_fancy")
+	testService = &Service{
+		Type:     testType,
+		Name:     "test-name",
+		Port:     8888,
+		Hostname: "test-hostname1",
+	}
+	testSubService = &Service{
+		Type:     testSubtype,
+		Name:     "test-name",
+		Port:     8888,
+		Hostname: "test-hostname2",
+	}
 )
 
 // Check that a published service can be discovered by a browser
-func testBasic(t *testing.T, service *Type) {
+func testBasic(t *testing.T, svc *Service) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	pub, err := New().Publish(service, testService).Open()
+	pub, err := New().Publish(svc).Open()
 	if err != nil {
 		t.Fatalf("failed creating publisher %v", err)
 	}
 	defer pub.Close()
 
 	var found *Service
-	browser, err := New().Browse(service, func(e Event) {
+	browser, err := New().Browse(svc.Type, func(e Event) {
 		e.Addrs = nil
 		if e.Op == OpAdded {
 			found = e.Service
@@ -46,15 +53,15 @@ func testBasic(t *testing.T, service *Type) {
 	if found == nil {
 		t.Fatalf("service wasn't found")
 	}
-	if !found.Equal(testService) {
-		t.Fatalf("services not equal, expected [%v], got [%v]", testService, found)
+	if !found.Equal(svc) {
+		t.Fatalf("services not equal, expected [%v], got [%v]", svc, found)
 	}
 }
 
 func TestBasic(t *testing.T) {
-	testBasic(t, testType)
+	testBasic(t, testService)
 }
 
 func TestBasicSubtype(t *testing.T) {
-	testBasic(t, testSubtype)
+	testBasic(t, testSubService)
 }

@@ -98,13 +98,13 @@ loop:
 		isPeriodic = bo.advance(now)
 
 		// Publish initial announcements
-		if c.opts.publisher != nil && isPeriodic && bo.n <= announceCount {
+		if c.opts.publish != nil && isPeriodic && bo.n <= announceCount {
 			err := c.broadcastRecords(false)
 			c.opts.logger.Debug("announce", "err", err)
 		}
 
 		// Handle any queries
-		if c.opts.publisher != nil && msg != nil {
+		if c.opts.publish != nil && msg != nil {
 			_ = c.handleQuery(*msg)
 		}
 
@@ -134,7 +134,7 @@ func (c *Client) Reload() {
 func (c *Client) Close() error {
 	c.conn.SetReadDeadline(time.Now())
 	c.wg.Wait()
-	if c.opts.publisher != nil {
+	if c.opts.publish != nil {
 		err := c.broadcastRecords(true)
 		c.opts.logger.Debug("unannounce", "err", err)
 	}
@@ -145,18 +145,18 @@ func (c *Client) Close() error {
 // provided by the user).
 func (c *Client) recordsForIface(iface *connInterface, unannounce bool) []dns.RR {
 	// Copy the service to create a new one with the right ips
-	svc := *c.opts.publisher.svc
+	svc := *c.opts.publish
 
 	if len(svc.Addrs) == 0 {
 		svc.Addrs = append(svc.Addrs, iface.v4...)
 		svc.Addrs = append(svc.Addrs, iface.v6...)
 	}
 
-	return recordsFromService(c.opts.publisher.ty, &svc, unannounce)
+	return recordsFromService(&svc, unannounce)
 }
 
 func (c *Client) handleQuery(msg msgMeta) error {
-	if c.opts.publisher.svc == nil {
+	if c.opts.publish == nil {
 		return nil
 	}
 	// RFC6762 Section 8.2: Probing messages are ignored, for now.
@@ -213,7 +213,7 @@ func (c *Client) handleQueryForIface(query *dns.Msg, iface *connInterface, src n
 
 // Broadcast all records to all interfaces. If unannounce is set, the TTLs are zero
 func (c *Client) broadcastRecords(unannounce bool) error {
-	if c.opts.publisher == nil {
+	if c.opts.publish == nil {
 		return nil
 	}
 	var errs []error
@@ -238,7 +238,7 @@ func (c *Client) advanceBrowser(now time.Time, msg *msgMeta, isPeriodic bool) (n
 		svcs = servicesFromRecords(msg.Msg, c.opts.browser.ty)
 	}
 	for _, svc := range svcs {
-		if c.opts.publisher != nil && svc.Name == c.opts.publisher.svc.Name {
+		if c.opts.publish != nil && svc.Name == c.opts.publish.Name {
 			continue
 		}
 		svc.ttl = min(svc.ttl, c.opts.maxAge)
@@ -262,9 +262,9 @@ func (c *Client) broadcastQuery() error {
 		Qtype:  dns.TypePTR,
 		Qclass: dns.ClassINET,
 	})
-	if pub := c.opts.publisher; pub != nil {
+	if c.opts.publish != nil {
 		// Include self-published service as "known answers", to avoid responding to ourselves
-		m.Answer = ptrRecords(pub.ty, pub.svc, false)
+		m.Answer = ptrRecords(c.opts.publish, false)
 	}
 	m.Id = dns.Id()
 	m.Compress = true

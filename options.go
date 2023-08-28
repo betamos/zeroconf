@@ -21,8 +21,8 @@ type browser struct {
 type Options struct {
 	logger *slog.Logger
 
-	browser   *browser
-	publisher *publisher
+	browser *browser
+	publish *Service
 
 	maxPeriod time.Duration // Max period to perform periodic tasks - like sending queries
 	ifacesFn  func() ([]net.Interface, error)
@@ -43,7 +43,7 @@ func New() *Options {
 
 // Checks that the options are sound.
 func (o *Options) Validate() error {
-	if o.browser == nil && o.publisher == nil {
+	if o.browser == nil && o.publish == nil {
 		return errors.New("either a browser or a publisher must be provided")
 	}
 	var errs []error
@@ -53,17 +53,16 @@ func (o *Options) Validate() error {
 			errs = append(errs, errors.New("too many subtypes for browsing"))
 		}
 	}
-	if o.publisher != nil {
-		errs = append(errs, o.publisher.ty.Validate())
-		errs = append(errs, o.publisher.svc.Validate())
+	if o.publish != nil {
+		errs = append(errs, o.publish.Validate())
 	}
 	return errors.Join(errs...)
 }
 
 // Publish a service of a given type. Name, port and hostname are required.
 // Addrs are determined dynamically based on network interfaces, but can be overriden.
-func (o *Options) Publish(ty *Type, svc *Service) *Options {
-	o.publisher = &publisher{ty, svc}
+func (o *Options) Publish(svc *Service) *Options {
+	o.publish = svc
 	return o
 }
 

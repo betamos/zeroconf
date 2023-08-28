@@ -45,7 +45,8 @@ func main() {
 		log.SetFlags(log.Ltime)
 	}
 
-	svc := zeroconf.NewService(*name, uint16(*port))
+	ty := zeroconf.NewType(*typeStr)
+	svc := zeroconf.NewService(ty, *name, uint16(*port))
 	svc.Text = split(*text)
 	if *hostname != "" {
 		svc.Hostname = *hostname
@@ -53,7 +54,6 @@ func main() {
 	for _, addr := range split(*addrs) {
 		svc.Addrs = append(svc.Addrs, netip.MustParseAddr(addr))
 	}
-	ty := zeroconf.NewType(*typeStr)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -65,7 +65,7 @@ func main() {
 
 	var err error
 	if *name != "" {
-		opts.Publish(ty, svc)
+		opts.Publish(svc)
 		log.Printf("publishing to [%v]: %v\n", ty, svc)
 
 	}

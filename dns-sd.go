@@ -100,28 +100,28 @@ func queryName(ty *Type) (str string) {
 //
 // RFC 6763 Section 4.3: [...] the <Instance> portion is allowed to contain any characters
 // Spaces and backslashes are escaped by "github.com/miekg/dns".
-func servicePath(ty *Type, svc *Service) string {
+func servicePath(svc *Service) string {
 	name := strings.ReplaceAll(svc.Name, ".", "\\.")
-	return fmt.Sprintf("%s.%s.%s.", name, ty.Name, ty.Domain)
+	return fmt.Sprintf("%s.%s.%s.", name, svc.Type.Name, svc.Type.Domain)
 }
 
 // Parse a service path into a service type and its name
-func parseServicePath(s string) (ty *Type, name string, err error) {
+func parseServicePath(s string) (svc *Service, err error) {
 	parts := dns.SplitDomainName(s)
 	var subtypes []string
 	// [service, type-identifier, type-proto, domain...]
 	if len(parts) < 4 {
-		return nil, "", fmt.Errorf("not enough components")
+		return nil, fmt.Errorf("not enough components")
 	}
 	// The service name may contain dots.
-	name = unescapeDns(parts[0])
+	name := unescapeDns(parts[0])
 	typeName := fmt.Sprintf("%s.%s", parts[1], parts[2])
 	domain := strings.Join(parts[3:], ".")
-	ty = &Type{typeName, subtypes, domain}
+	ty := &Type{typeName, subtypes, domain}
 	if err := ty.Validate(); err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return ty, name, nil
+	return &Service{Type: ty, Name: name}, nil
 }
 
 // Returns true if the record is an answer to question
@@ -205,14 +205,14 @@ func servicesFromRecords(msg *dns.Msg, search *Type) (services []*Service) {
 		// Phase 1: create services
 		case *dns.PTR:
 			// TODO: Parse type path?
-			if rr.Hdr.Name != question { // match question, e.g. `_printer._sub._http._tcp.`
+			if rr.Hdr.Name != question { // match question, e.g. `_printer._sub._http._tcp.local.`
 				continue
 			}
 
 			// pointer to service path, e.g. `My Printer._http._tcp.`
-			service, serviceName, err := parseServicePath(rr.Ptr)
-			if err == nil && search.Equal(service) {
-				m[rr.Ptr] = &Service{Name: serviceName}
+			svc, err := parseServicePath(rr.Ptr)
+			if err == nil && search.Equal(svc.Type) {
+				m[rr.Ptr] = svc
 			}
 
 		// Phase 2: populate other fields
@@ -259,12 +259,12 @@ func servicesFromRecords(msg *dns.Msg, search *Type) (services []*Service) {
 }
 
 // Ptr records for a service
-func ptrRecords(ty *Type, svc *Service, unannounce bool) (records []dns.RR) {
+func ptrRecords(svc *Service, unannounce bool) (records []dns.RR) {
 	var ttl uint32 = 75 * 60
 	if unannounce {
 		ttl = 0
 	}
-	names := responderNames(ty)
+	names := responderNames(svc.Type)
 	for _, name := range names {
 		records = append(records, &dns.PTR{
 			Hdr: dns.RR_Header{
@@ -273,13 +273,13 @@ func ptrRecords(ty *Type, svc *Service, unannounce bool) (records []dns.RR) {
 				Class:  sharedRecordClass,
 				Ttl:    ttl,
 			},
-			Ptr: servicePath(ty, svc),
+			Ptr: servicePath(svc),
 		})
 	}
 	return
 }
 
-func recordsFromService(ty *Type, svc *Service, unannounce bool) (records []dns.RR) {
+func recordsFromService(svc *Service, unannounce bool) (records []dns.RR) {
 
 	// RFC6762 Section 10: Records referencing a hostname (SRV/A/AAAA) SHOULD use TTL of 120 s,
 	// to account for network interface and IP address changes, while others should be 75 min.
@@ -288,11 +288,11 @@ func recordsFromService(ty *Type, svc *Service, unannounce bool) (records []dns.
 		hostRecordTTL, defaultTTL = 0, 0
 	}
 
-	servicePath := servicePath(ty, svc)
+	servicePath := servicePath(svc)
 	hostname := svc.Hostname + "."
 
 	// PTR records
-	records = ptrRecords(ty, svc, unannounce)
+	records = ptrRecords(svc, unannounce)
 
 	// RFC 6763 Section 9: Service Type Enumeration.
 	// For this purpose, a special meta-query is defined.  A DNS query for
@@ -301,12 +301,12 @@ func recordsFromService(ty *Type, svc *Service, unannounce bool) (records []dns.
 	// label <Service> name, plus the same domain, e.g., "_http._tcp.<Domain>".
 	records = append(records, &dns.PTR{
 		Hdr: dns.RR_Header{
-			Name:   fmt.Sprintf("_services._dns-sd._udp.%v.", ty.Domain),
+			Name:   fmt.Sprintf("_services._dns-sd._udp.%v.", svc.Type.Domain),
 			Rrtype: dns.TypePTR,
 			Class:  sharedRecordClass,
 			Ttl:    defaultTTL,
 		},
-		Ptr: fmt.Sprintf("%v.%v.", ty.Name, ty.Domain),
+		Ptr: fmt.Sprintf("%v.%v.", svc.Type.Name, svc.Type.Domain),
 	})
 
 	// SRV record

@@ -28,12 +28,12 @@ type Type struct {
 	Domain string `json:"domain"`
 }
 
-func (s *Type) String() string {
+func (t *Type) String() string {
 	var sub string
-	if len(s.Subtypes) > 0 {
-		sub = "," + strings.Join(s.Subtypes, ",")
+	if len(t.Subtypes) > 0 {
+		sub = "," + strings.Join(t.Subtypes, ",")
 	}
-	return fmt.Sprintf("%s.%s%s", s.Name, s.Domain, sub)
+	return fmt.Sprintf("%s.%s%s", t.Name, t.Domain, sub)
 }
 
 // Returns a type based on a string on the form `_my-service._tcp` or `_my-service._udp`.
@@ -60,6 +60,9 @@ func NewType(typeStr string) *Type {
 
 // Equality *without* subtypes
 func (s *Type) Equal(o *Type) bool {
+	if s == o {
+		return true
+	}
 	return s.Name == o.Name && s.Domain == o.Domain
 }
 
@@ -89,16 +92,18 @@ func (s *Type) Validate() error {
 	return nil
 }
 
-// A service provided on the local network. It is reachable at the advertised addresses and port
-// number.
+// A service reachable on the local network.
 type Service struct {
-	// A name that identifies a service of a given type, e.g. `Office Printer`
+	// The service type
+	Type *Type
+
+	// A name that uniquely identifies a service of a given type, e.g. `Office Printer 32`.
 	Name string `json:"name"`
 
 	// A non-zero port number
 	Port uint16 `json:"port"`
 
-	// Hostname, e.g. `Bryans-Mac.local`
+	// A hostname, e.g. `Bryans-Mac.local`
 	Hostname string `json:"hostname"`
 
 	// A set of IP addresses
@@ -114,36 +119,50 @@ type Service struct {
 
 // Create a new service for publishing. The hostname is generated based on `os.Hostname()`.
 // Choose a unique name to avoid conflicts with other services of the same type.
-func NewService(name string, port uint16) *Service {
+func NewService(ty *Type, name string, port uint16) *Service {
 	osHostname, _ := os.Hostname()
 	return &Service{
+		Type:     ty,
 		Name:     name,
 		Port:     port,
 		Hostname: ensureSuffix(osHostname, ".local"),
 	}
 }
 
-func (i *Service) String() string {
-	return fmt.Sprintf("%v (%v)", i.Name, i.Hostname)
+func (s *Service) String() string {
+	return fmt.Sprintf("%v (%v)", s.Name, s.Hostname)
 }
 
-func (i *Service) Validate() error {
-	if i.Hostname == "" {
+func (s *Service) Validate() error {
+	if s.Type == nil {
+		return errors.New("no type specified")
+	}
+	if err := s.Type.Validate(); err != nil {
+		return err
+	}
+	if s.Hostname == "" {
 		return errors.New("no name specified")
 	}
-	if i.Hostname == "" {
+	if s.Hostname == "" {
 		return errors.New("no hostname specified")
 	}
-	if i.Port == 0 {
+	if s.Port == 0 {
 		return errors.New("port is 0")
 	}
 	return nil
 }
 
-func (i *Service) Equal(o *Service) bool {
-	if i.Hostname != o.Hostname || i.Port != o.Port || !slices.Equal(i.Text, o.Text) {
+// Returns true if the type (excluding subtypes) and all fields are equal.
+func (s *Service) Equal(o *Service) bool {
+	if s == o {
+		return true
+	}
+	if !s.Type.Equal(o.Type) {
 		return false
 	}
-	// Note we're not sorting ("normalizing") addresses, since the order can indicate preference
-	return slices.Equal(i.Addrs, o.Addrs)
+	if s.Hostname != o.Hostname || s.Port != o.Port || !slices.Equal(s.Text, o.Text) {
+		return false
+	}
+	// Note we're not "normalizing" addrs here
+	return slices.Equal(s.Addrs, o.Addrs)
 }
