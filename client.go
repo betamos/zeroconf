@@ -23,7 +23,7 @@ const (
 	writeTimeout = 10 * time.Millisecond
 )
 
-// A client which publishes and/or browses for services.
+// A client which publishes and/or browses for services. See `Options` for how to create one.
 type Client struct {
 	wg     sync.WaitGroup
 	conn   *conn

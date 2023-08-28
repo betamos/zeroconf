@@ -58,7 +58,7 @@ func NewType(typeStr string) *Type {
 	return ty
 }
 
-// Equality *without* subtypes
+// Returns true if the types are equal (excluding subtypes)
 func (s *Type) Equal(o *Type) bool {
 	if s == o {
 		return true

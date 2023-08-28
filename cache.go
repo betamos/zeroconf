@@ -18,7 +18,7 @@ const (
 	// A service was added.
 	OpAdded Op = iota
 
-	// A previously added service is updated, such as a new set of addrs.
+	// A previously added service is updated, e.g. with a new set of addrs.
 	// Note that regular TTL refreshes do not trigger updates.
 	OpUpdated
 
