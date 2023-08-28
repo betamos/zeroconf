@@ -26,7 +26,7 @@ func TestQueryName(t *testing.T) {
 		Subtypes: []string{"_printer"},
 		Domain:   "local",
 	}
-	name := ty.queryName()
+	name := queryName(ty)
 	expect := "_printer._sub._service._tcp.local."
 	if name != expect {
 		t.Fatalf("expected %v, got %v", expect, name)

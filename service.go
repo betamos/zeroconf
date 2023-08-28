@@ -88,56 +88,6 @@ func (s *Type) Validate() error {
 	return nil
 }
 
-// Returns the main service type, e.g. `_http._tcp.local.` and any additional subtypes,
-// e.g. `_printer._sub._http._tcp.local.`. Responders only.
-//
-// # See RFC6763 Section 7.1
-//
-// Format:
-// <type>.<domain>.
-// _sub.<subtype>.<type>.<domain>.
-func (s *Type) responderNames() (types []string) {
-	types = append(types, fmt.Sprintf("%s.%s.", s.Name, s.Domain))
-	for _, sub := range s.Subtypes {
-		types = append(types, fmt.Sprintf("%s._sub.%s.%s.", sub, s.Name, s.Domain))
-	}
-	return
-}
-
-// Returns the query DNS name to use in e.g. a PTR query.
-func (s *Type) queryName() (str string) {
-	if len(s.Subtypes) > 0 {
-		return fmt.Sprintf("%s._sub.%s.%s.", s.Subtypes[0], s.Name, s.Domain)
-	} else {
-		return fmt.Sprintf("%s.%s.", s.Name, s.Domain)
-	}
-}
-
-// Returns a complete service path, e.g. `MyDemo\ Service._foobar._tcp.local.`,
-// which is composed from service name, its main type and a domain.
-func servicePath(s *Type, e *Service) string {
-	return fmt.Sprintf("%s.%s.%s.", e.escapeName(), s.Name, s.Domain)
-}
-
-// Parse a service path into a service type and its name
-func parseServicePath(s string) (ty *Type, name string, err error) {
-	parts := dns.SplitDomainName(s)
-	var subtypes []string
-	// [service, type-identifier, type-proto, domain...]
-	if len(parts) < 4 {
-		return nil, "", fmt.Errorf("not enough components")
-	}
-	// The service name may contain dots.
-	name = unescapeDns(parts[0])
-	typeName := fmt.Sprintf("%s.%s", parts[1], parts[2])
-	domain := strings.Join(parts[3:], ".")
-	ty = &Type{typeName, subtypes, domain}
-	if err := ty.Validate(); err != nil {
-		return nil, "", err
-	}
-	return ty, name, nil
-}
-
 // A service provided on the local network. It is reachable at the advertised addresses and port
 // number.
 type Service struct {
@@ -178,20 +128,10 @@ func (i *Service) Validate() error {
 	return nil
 }
 
-func (i *Service) hostname() string {
-	return fmt.Sprintf("%v.", i.Hostname)
-}
-
 func (i *Service) Equal(o *Service) bool {
 	if i.Hostname != o.Hostname || i.Port != o.Port || !slices.Equal(i.Text, o.Text) {
 		return false
 	}
 	// Note we're not sorting ("normalizing") addresses, since the order can indicate preference
 	return slices.Equal(i.Addrs, o.Addrs)
-}
-
-// RFC 6763 Section 4.3: [...] the <Instance> portion is allowed to contain any characters
-// Spaces and backslashes are escaped by "github.com/miekg/dns".
-func (s *Service) escapeName() string {
-	return strings.ReplaceAll(s.Name, ".", "\\.")
 }

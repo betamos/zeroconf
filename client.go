@@ -261,7 +261,7 @@ func (c *Client) advanceBrowser(now time.Time, msg *msgMeta, isPeriodic bool) (n
 func (c *Client) broadcastQuery() error {
 	m := new(dns.Msg)
 	m.Question = append(m.Question, dns.Question{
-		Name:   c.opts.browser.ty.queryName(),
+		Name:   queryName(c.opts.browser.ty),
 		Qtype:  dns.TypePTR,
 		Qclass: dns.ClassINET,
 	})

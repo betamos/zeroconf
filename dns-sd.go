@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/miekg/dns"
@@ -69,6 +70,60 @@ const (
 	sharedRecordClass = dns.ClassINET
 )
 
+// Returns the main service type, e.g. `_http._tcp.local.` and any additional subtypes,
+// e.g. `_printer._sub._http._tcp.local.`. Responders only.
+//
+// # See RFC6763 Section 7.1
+//
+// Format:
+// <type>.<domain>.
+// _sub.<subtype>.<type>.<domain>.
+func responderNames(ty *Type) (types []string) {
+	types = append(types, fmt.Sprintf("%s.%s.", ty.Name, ty.Domain))
+	for _, sub := range ty.Subtypes {
+		types = append(types, fmt.Sprintf("%s._sub.%s.%s.", sub, ty.Name, ty.Domain))
+	}
+	return
+}
+
+// Returns the query DNS name to use in e.g. a PTR query.
+func queryName(ty *Type) (str string) {
+	if len(ty.Subtypes) > 0 {
+		return fmt.Sprintf("%s._sub.%s.%s.", ty.Subtypes[0], ty.Name, ty.Domain)
+	} else {
+		return fmt.Sprintf("%s.%s.", ty.Name, ty.Domain)
+	}
+}
+
+// Returns a complete service path, e.g. `MyDemo\ Service._foobar._tcp.local.`,
+// which is composed from service name, its main type and a domain.
+//
+// RFC 6763 Section 4.3: [...] the <Instance> portion is allowed to contain any characters
+// Spaces and backslashes are escaped by "github.com/miekg/dns".
+func servicePath(ty *Type, svc *Service) string {
+	name := strings.ReplaceAll(svc.Name, ".", "\\.")
+	return fmt.Sprintf("%s.%s.%s.", name, ty.Name, ty.Domain)
+}
+
+// Parse a service path into a service type and its name
+func parseServicePath(s string) (ty *Type, name string, err error) {
+	parts := dns.SplitDomainName(s)
+	var subtypes []string
+	// [service, type-identifier, type-proto, domain...]
+	if len(parts) < 4 {
+		return nil, "", fmt.Errorf("not enough components")
+	}
+	// The service name may contain dots.
+	name = unescapeDns(parts[0])
+	typeName := fmt.Sprintf("%s.%s", parts[1], parts[2])
+	domain := strings.Join(parts[3:], ".")
+	ty = &Type{typeName, subtypes, domain}
+	if err := ty.Validate(); err != nil {
+		return nil, "", err
+	}
+	return ty, name, nil
+}
+
 // Returns true if the record is an answer to question
 func isAnswerTo(record dns.RR, question dns.Question) bool {
 	hdr := record.Header()
@@ -132,7 +187,7 @@ func servicesFromRecords(msg *dns.Msg, search *Type) (services []*Service) {
 	// TODO: Support meta-queries
 	var (
 		answers  = append(msg.Answer, msg.Extra...)
-		question = search.queryName()
+		question = queryName(search)
 		m        = make(map[string]*Service, 1) // temporary map of service paths to services
 		addrMap  = make(map[string][]netip.Addr, 1)
 		svc      *Service
@@ -209,7 +264,7 @@ func ptrRecords(ty *Type, svc *Service, unannounce bool) (records []dns.RR) {
 	if unannounce {
 		ttl = 0
 	}
-	names := ty.responderNames()
+	names := responderNames(ty)
 	for _, name := range names {
 		records = append(records, &dns.PTR{
 			Hdr: dns.RR_Header{
@@ -234,7 +289,7 @@ func recordsFromService(ty *Type, svc *Service, unannounce bool) (records []dns.
 	}
 
 	servicePath := servicePath(ty, svc)
-	hostname := svc.hostname()
+	hostname := svc.Hostname + "."
 
 	// PTR records
 	records = ptrRecords(ty, svc, unannounce)
