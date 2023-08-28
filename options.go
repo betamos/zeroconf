@@ -10,12 +10,12 @@ import (
 )
 
 type publisher struct {
-	service  *Service
-	instance *Instance
+	ty  *Type
+	svc *Service
 }
 
 type browser struct {
-	service *Service
+	ty *Type
 	*cache
 }
 
@@ -50,21 +50,21 @@ func (o *Options) Validate() error {
 	}
 	var errs []error
 	if o.browser != nil {
-		errs = append(errs, o.browser.service.Validate())
-		if len(o.browser.service.Subtypes) > 1 {
+		errs = append(errs, o.browser.ty.Validate())
+		if len(o.browser.ty.Subtypes) > 1 {
 			errs = append(errs, errors.New("too many subtypes for browsing"))
 		}
 	}
 	if o.publisher != nil {
-		errs = append(errs, o.publisher.service.Validate())
-		errs = append(errs, o.publisher.instance.Validate())
+		errs = append(errs, o.publisher.ty.Validate())
+		errs = append(errs, o.publisher.svc.Validate())
 	}
 	return errors.Join(errs...)
 }
 
-// Publish an instance of a service. Name and Port are required.
+// Publish a service of a given type. Name and Port are required.
 // Addrs and Hostname are determined automatically, but can be overriden.
-func (o *Options) Publish(s *Service, i *Instance) *Options {
+func (o *Options) Publish(s *Type, i *Service) *Options {
 	if i.Hostname == "" {
 		hostname, _ := strings.CutSuffix(defaultHostname, ".local")
 		i.Hostname = fmt.Sprintf("%v.%v", hostname, s.Domain)
@@ -73,20 +73,20 @@ func (o *Options) Publish(s *Service, i *Instance) *Options {
 	return o
 }
 
-// Browse for instance of a given service type. Optionally, a single subtype may be provided to
-// narrow the search. Events are sent to the provided callback.
+// Browse for services of a given type and notify the provided callback as services come and go.
+// Any self-published services are ignored.
 //
-// Any self-published instance is ignored.
-func (o *Options) Browse(s *Service, cb func(Event)) *Options {
+// Optionally, a single subtype may be provided to narrow the search.
+func (o *Options) Browse(s *Type, cb func(Event)) *Options {
 	o.browser = &browser{
-		service: s,
-		cache:   newCache(cb),
+		ty:    s,
+		cache: newCache(cb),
 	}
 	return o
 }
 
 // While browsing, override received TTL (normally 120s) with a custom duration. This will remove
-// stale instances quicker, but results in more frequent queries.
+// stale services quicker, but results in more frequent queries.
 func (o *Options) MaxAge(age time.Duration) *Options {
 	o.maxAge = max(5*time.Second, age)
 	return o

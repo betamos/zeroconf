@@ -15,14 +15,14 @@ import (
 type Op int
 
 const (
-	// An instance was added.
+	// A service was added.
 	OpAdded Op = iota
 
-	// A previously added instance is updated, such as a new set of addrs.
+	// A previously added service is updated, such as a new set of addrs.
 	// Note that regular TTL refreshes do not trigger updates.
 	OpUpdated
 
-	// An instance expired or was unannounced. There are no addresses associated with this op.
+	// A service expired or was unannounced. There are no addresses associated with this op.
 	OpRemoved
 )
 
@@ -39,32 +39,32 @@ func (op Op) String() string {
 	}
 }
 
-// An event represents a change in the state of an instance, identified by its name.
-// The instance reflects the new state and is always non-nil. If an instance is found on multiple
+// An event represents a change in the state of a service, identified by its name.
+// The service reflects the new state and is always non-nil. If a service is found on multiple
 // network interfaces with different addresses, they are merged and reflected as updates according
 // to their individual life cycles.
 type Event struct {
-	*Instance
+	*Service
 	Op
 }
 
 func (e Event) String() string {
-	return fmt.Sprintf("%v %v", e.Op, e.Instance)
+	return fmt.Sprintf("%v %v", e.Op, e.Service)
 }
 
-// The cache maintains a map of service instances and notifies the user of changes.
+// The cache maintains a map of services and notifies the user of changes.
 // It relies on both the current time and query times in order to
-// expire instances and inform when new queries are needed.
+// expire services and inform when new queries are needed.
 // The cache should use wall-clock time and will automatically adjust for unexpected jumps
 // backwards in time.
 type cache struct {
-	// map from instance name to a slice of "unique" instance records for the same instance,
+	// map from service name to a slice of "distinct" records,
 	// in case there are multiple announcements. the "authoritative" record is the last one,
 	// although other records can contain more addresses.
 	//
 	// invariant: slice sorted by lastSeen and always >= 1 element
-	instances map[string][]*Instance
-	cb        func(Event)
+	services map[string][]*Service
+	cb       func(Event)
 
 	// A number in range [0,1) used for query scheduling jitter. Regenerated at query time.
 	entropy float64
@@ -72,21 +72,21 @@ type cache struct {
 	// Advanced by user
 	lastQuery, now time.Time
 
-	// The earliest expiry time of the instances in the cache.
+	// The earliest expiry time of the services in the cache.
 	nextExpiry time.Time
 
-	// The earliest live check scheduled, based on lastQuery and cache instances.
-	// A live check query happens at 80-97% of an instance expiry. To prevent excessive
-	// queries, only instances that responded to the last query are considered for a live check.
+	// The earliest live check scheduled, based on lastQuery and cache services.
+	// A live check query happens at 80-97% of a service expiry. To prevent excessive
+	// queries, only services that responded to the last query are considered for a live check.
 	nextLivecheck time.Time
 }
 
-// Create a new cache with an event callback. If maxTTL is non-zero, instances in the cache are capped
+// Create a new cache with an event callback. If maxTTL is non-zero, services in the cache are capped
 // to the provided duration in seconds.
 func newCache(cb func(Event)) *cache {
 	return &cache{
-		instances: make(map[string][]*Instance),
-		cb:        cb,
+		services: make(map[string][]*Service),
+		cb:       cb,
 	}
 }
 
@@ -99,47 +99,47 @@ func (c *cache) Advance(now time.Time) {
 	c.refresh()
 }
 
-func (c *cache) Put(i *Instance) {
-	k := i.Name
-	i.seenAt = c.now
+func (c *cache) Put(svc *Service) {
+	k := svc.Name
+	svc.seenAt = c.now
 	defer c.refresh()
 
-	is := c.instances[i.Name]
+	svcs := c.services[svc.Name]
 
-	// Instance removed through a "Goodbye Packet"
-	if i.ttl == 0 {
+	// Service removed through a "Goodbye Packet"
+	if svc.ttl == 0 {
 		// ...But check that we actually have it first
-		if is != nil {
-			i.Addrs = nil
-			c.cb(Event{i, OpRemoved})
-			delete(c.instances, k)
+		if svcs != nil {
+			svc.Addrs = nil
+			c.cb(Event{svc, OpRemoved})
+			delete(c.services, k)
 		}
 		return
 	}
 
-	// Added instance
-	if is == nil {
-		last := *i
-		last.Addrs = mergeAddrs(i) // Sort, for consistency
+	// Added service
+	if svcs == nil {
+		last := *svc
+		last.Addrs = mergeAddrs(svc) // Sort, for consistency
 		c.cb(Event{&last, OpAdded})
-		c.instances[k] = []*Instance{i}
+		c.services[k] = []*Service{svc}
 		return
 	}
 
 	// Invariant: len(is) > 0, which means this is an update
 
 	// Already "equal", simply update TTL without notifying the user
-	if idx := slices.IndexFunc(is, i.Equal); idx > -1 {
-		is[idx] = i
-		slices.SortFunc(is, byLastSeen)
+	if idx := slices.IndexFunc(svcs, svc.Equal); idx > -1 {
+		svcs[idx] = svc
+		slices.SortFunc(svcs, byLastSeen)
 		return
 	}
 
 	// We assume this is a user-facing update
-	is = append(is, i)
-	last := *i
-	last.Addrs = mergeAddrs(is...)
-	c.instances[k] = is
+	svcs = append(svcs, svc)
+	last := *svc
+	last.Addrs = mergeAddrs(svcs...)
+	c.services[k] = svcs
 	c.cb(Event{&last, OpUpdated})
 
 }
@@ -172,70 +172,70 @@ func (c *cache) NextDeadline() time.Time {
 func (c *cache) refresh() {
 	// Use maxInterval simply for a large time value
 	c.nextExpiry, c.nextLivecheck = c.now.Add(maxInterval), c.now.Add(maxInterval)
-	for k, is := range c.instances {
+	for k, svcs := range c.services {
 
-		// Copy the last instance as authoritative as template for updates etc
-		last := *is[len(is)-1]
+		// Copy the last service as authoritative as template for updates etc
+		last := *svcs[len(svcs)-1]
 
-		// If there are expired instances, update list and trigger an update
-		if n := expired(is, c.now, last.ttl); n > 0 {
-			is = is[n:]
-			last.Addrs = mergeAddrs(is...) // Remaining valid addresses, possibly empty
+		// If there are expired services, update list and trigger an update
+		if n := expired(svcs, c.now, last.ttl); n > 0 {
+			svcs = svcs[n:]
+			last.Addrs = mergeAddrs(svcs...) // Remaining valid addresses, possibly empty
 
-			// All instances expired, so we remove
-			if len(is) == 0 {
-				delete(c.instances, k)
+			// All services expired, so we remove
+			if len(svcs) == 0 {
+				delete(c.services, k)
 				c.cb(Event{&last, OpRemoved})
 				continue
 			}
 
-			// Some instances remain, so we update
+			// Some services remain, so we update
 
 			// Modifying a map entry during iteration is totally kosher but Go spec insists on
 			// making that hard to find because "it's too obvious"... Well
-			c.instances[k] = is
+			c.services[k] = svcs
 			c.cb(Event{&last, OpUpdated})
 		}
 
-		// Use the first instance to update next expiry
-		firstExpiry := is[0].seenAt.Add(last.ttl)
+		// Use the first service to update next expiry
+		firstExpiry := svcs[0].seenAt.Add(last.ttl)
 		if firstExpiry.Before(c.nextExpiry) {
 			c.nextExpiry = firstExpiry
 		}
 
-		// An instance has already been queried if it hasn't been seen since the last query
-		if is[0].seenAt.Before(c.lastQuery) {
+		// An service has already been queried if it hasn't been seen since the last query
+		if svcs[0].seenAt.Before(c.lastQuery) {
 			continue
 		}
 
 		// Update next livecheck
 		floatDur := float64(last.ttl) * (0.80 + c.entropy*0.17) // 80-97% of ttl
-		liveCheck := is[0].seenAt.Add(time.Duration(floatDur))
+		liveCheck := svcs[0].seenAt.Add(time.Duration(floatDur))
 		if liveCheck.Before(c.nextLivecheck) {
 			c.nextLivecheck = liveCheck
 		}
 	}
 }
 
-// Return sorted, distinct addrs from a number of instances
-func mergeAddrs(is ...*Instance) (addrs []netip.Addr) {
-	for _, i := range is {
-		addrs = append(addrs, i.Addrs...)
+// Return sorted, distinct addrs from a number of services
+func mergeAddrs(svcs ...*Service) (addrs []netip.Addr) {
+	for _, svc := range svcs {
+		addrs = append(addrs, svc.Addrs...)
 	}
 	slices.SortFunc(addrs, netip.Addr.Compare)
 	return slices.Compact(addrs)
 }
 
-// Returns the number of expired instances.
+// Returns the number of expired services.
 // While we're at it, adjust for unexpected time jumps.
-func expired(is []*Instance, now time.Time, ttl time.Duration) (n int) {
-	for _, i := range is {
+func expired(svcs []*Service, now time.Time, ttl time.Duration) (n int) {
+	for _, svc := range svcs {
 		// Ensure that seenAt is before now (in the rare case wall time jumped backwards)
-		if i.seenAt.After(now) {
-			i.seenAt = now
+		if svc.seenAt.After(now) {
+			svc.seenAt = now
 		}
 		// If expired, remove instantly
-		expiry := i.seenAt.Add(ttl)
+		expiry := svc.seenAt.Add(ttl)
 		if expiry.Before(now) { // no more expired entries
 			n++
 		}
@@ -243,6 +243,6 @@ func expired(is []*Instance, now time.Time, ttl time.Duration) (n int) {
 	return n
 }
 
-func byLastSeen(a *Instance, b *Instance) int {
+func byLastSeen(a *Service, b *Service) int {
 	return int(a.seenAt.Sub(b.seenAt))
 }

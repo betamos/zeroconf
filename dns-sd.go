@@ -9,34 +9,34 @@ import (
 	"github.com/miekg/dns"
 )
 
-// This file implements DNS Service Discovery from RFC 6763
-
-// instance: any < 63 characters
-// service: dot-separated identifier, e.g. `_http._tcp` (must be `_tcp` or `_udp`)
+// RFC 6763: DNS Service Discovery
+//
+// service: name of the service (aka instance), any < 63 characters
+// type: two-label service type, e.g. `_http._tcp` (last label should be `_tcp` or `_udp`)
 // domain: typically `local`, but may in theory be an FQDN, e.g. `example.org`
 // subtype: optional service sub-type, e.g. `_printer`
 // hostname: hostname of a device, e.g. `Bryans-PC.local`
 //
-// Strings used in mDNS:
+// Names used in DNS records:
 //
-// target: <instance> . <service> . <domain>, e.g. `Bryan's Service._http._tcp.local`
-// query: <service> . <domain>, e.g. `_http._tcp.local`
-// sub-query: <subtype> . `_sub` . <service> . <domain>, e.g. `_printer._sub._http._tcp.local`
+// service-path: <service> . <type> . <domain>, e.g. `Bryan's Service._http._tcp.local`
+// query: <type> . <domain>, e.g. `_http._tcp.local`
+// sub-query: <subtype> . `_sub` . <type> . <domain>, e.g. `_printer._sub._http._tcp.local`
 // meta-query: `_services._dns-sd._udp.local`
 
-// We implement the following PTR queries:
+// A responder should resolve the following PTR queries:
 //
-// PTR <query>       ->  <target>               // Service enumeration
-// PTR <sub-query>   ->  <target>               // Service enumeration restricted to a subtype
-// PTR <meta-query>  ->  <service> . <domain>   // Meta-service enumeration
+// PTR <query>       ->  <service-path>      // Service enumeration
+// PTR <sub-query>   ->  <service-path>      // Service enumeration by subtype
+// PTR <meta-query>  ->  <type> . <domain>   // Meta-service enumeration
 //
 // The PTR target refers to the SRV and TXT records:
 //
-// SRV <target>:
+// SRV <service-path>:
 //   Hostname: <hostname>
 //   Port: <...>
 //
-// TXT <target>: (note this is included as an empty list even if no txt is provided)
+// TXT <service-path>: (note this is included as an empty list even if no txt is provided)
 //   Txt: <txt>
 //
 // And finally, the SRV refers to the A and AAAA records:
@@ -47,12 +47,11 @@ import (
 // AAAA <hostname>:
 //   AAAA: <ipv6>
 //
-// All of the "referred" records are added to the answer's additional section.
-
-// Each DNS packet is considered separately, and has a single response packet.
-// Multiple questions are allowed and are all answered separately but within
-// a single response packet. The response packet has no questions.
-// PTR questions without answer are ignored.
+// Optional: NSEC records, indicating that an RRSet is exhaustive.
+//
+// Note that all "referred" records (i.e. the transitive closure) should be included in a response,
+// as additional records, in order to avoid successive queries. A responder ignores any queries for
+// which it doesn't have an answer.
 
 const (
 	// RFC 6762 Section 10.2: [...] the host sets the most significant bit of the rrclass
@@ -128,16 +127,15 @@ func answerTo(records, knowns []dns.RR, question dns.Question) (answers, extras 
 	return
 }
 
-// Return a single service instance from the msg that matches the "search record" provided.
-// Typically, the search record is a "browsing" record for a service (i.e. no instance).
-func instancesFromRecords(msg *dns.Msg, search *Service) (instances []*Instance) {
+// Returns any services from the msg that matches the provided search type.
+func servicesFromRecords(msg *dns.Msg, search *Type) (services []*Service) {
 	// TODO: Support meta-queries
 	var (
 		answers  = append(msg.Answer, msg.Extra...)
 		question = search.queryName()
-		m        = make(map[string]*Instance, 1) // temporary map of instance paths to instances
+		m        = make(map[string]*Service, 1) // temporary map of service paths to services
 		addrMap  = make(map[string][]netip.Addr, 1)
-		i        *Instance
+		svc      *Service
 	)
 	if len(msg.Question) > 0 {
 		return
@@ -149,32 +147,32 @@ func instancesFromRecords(msg *dns.Msg, search *Service) (instances []*Instance)
 
 	for _, answer := range answers {
 		switch rr := answer.(type) {
-		// Phase 1: create instances
+		// Phase 1: create services
 		case *dns.PTR:
-			// TODO: Parse service path?
+			// TODO: Parse type path?
 			if rr.Hdr.Name != question { // match question, e.g. `_printer._sub._http._tcp.`
 				continue
 			}
 
-			// pointer to instance path, e.g. `My Printer._http._tcp.`
-			service, instanceName, err := parseInstancePath(rr.Ptr)
+			// pointer to service path, e.g. `My Printer._http._tcp.`
+			service, serviceName, err := parseServicePath(rr.Ptr)
 			if err == nil && search.Equal(service) {
-				m[rr.Ptr] = &Instance{Name: instanceName}
+				m[rr.Ptr] = &Service{Name: serviceName}
 			}
 
 		// Phase 2: populate other fields
 		case *dns.SRV:
-			if i = m[rr.Hdr.Name]; i == nil {
+			if svc = m[rr.Hdr.Name]; svc == nil {
 				continue
 			}
-			i.Hostname = rr.Target
-			i.Port = rr.Port
-			i.ttl = time.Second * time.Duration(rr.Hdr.Ttl)
+			svc.Hostname = rr.Target
+			svc.Port = rr.Port
+			svc.ttl = time.Second * time.Duration(rr.Hdr.Ttl)
 		case *dns.TXT:
-			if i = m[rr.Hdr.Name]; i == nil {
+			if svc = m[rr.Hdr.Name]; svc == nil {
 				continue
 			}
-			i.Text = rr.Txt
+			svc.Text = rr.Txt
 
 		// Phase 3: add addrs to addrMap
 		case *dns.A:
@@ -188,30 +186,30 @@ func instancesFromRecords(msg *dns.Msg, search *Service) (instances []*Instance)
 		}
 	}
 
-	for _, i := range m {
-		i.Addrs = addrMap[i.Hostname]
+	for _, svc := range m {
+		svc.Addrs = addrMap[svc.Hostname]
 
 		// Unescape afterwards to maintain comparison soundness above
-		i.Hostname = unescapeDns(i.Hostname)
-		for idx, txt := range i.Text {
-			i.Text[idx] = unescapeDns(txt)
+		svc.Hostname = unescapeDns(svc.Hostname)
+		for idx, txt := range svc.Text {
+			svc.Text[idx] = unescapeDns(txt)
 		}
-		i.Hostname = trimDot(i.Hostname)
-		if err := i.Validate(); err != nil {
+		svc.Hostname = trimDot(svc.Hostname)
+		if err := svc.Validate(); err != nil {
 			continue
 		}
-		instances = append(instances, i)
+		services = append(services, svc)
 	}
 	return
 }
 
-// Ptr records for an instance
-func ptrRecords(service *Service, instance *Instance, unannounce bool) (records []dns.RR) {
+// Ptr records for a service
+func ptrRecords(ty *Type, svc *Service, unannounce bool) (records []dns.RR) {
 	var ttl uint32 = 75 * 60
 	if unannounce {
 		ttl = 0
 	}
-	names := service.responderNames()
+	names := ty.responderNames()
 	for _, name := range names {
 		records = append(records, &dns.PTR{
 			Hdr: dns.RR_Header{
@@ -220,13 +218,13 @@ func ptrRecords(service *Service, instance *Instance, unannounce bool) (records 
 				Class:  sharedRecordClass,
 				Ttl:    ttl,
 			},
-			Ptr: instancePath(service, instance),
+			Ptr: servicePath(ty, svc),
 		})
 	}
 	return
 }
 
-func recordsFromService(service *Service, instance *Instance, unannounce bool) (records []dns.RR) {
+func recordsFromService(ty *Type, svc *Service, unannounce bool) (records []dns.RR) {
 
 	// RFC6762 Section 10: Records referencing a hostname (SRV/A/AAAA) SHOULD use TTL of 120 s,
 	// to account for network interface and IP address changes, while others should be 75 min.
@@ -235,11 +233,11 @@ func recordsFromService(service *Service, instance *Instance, unannounce bool) (
 		hostRecordTTL, defaultTTL = 0, 0
 	}
 
-	instancePath := instancePath(service, instance)
-	hostname := instance.hostname()
+	servicePath := servicePath(ty, svc)
+	hostname := svc.hostname()
 
 	// PTR records
-	records = ptrRecords(service, instance, unannounce)
+	records = ptrRecords(ty, svc, unannounce)
 
 	// RFC 6763 Section 9: Service Type Enumeration.
 	// For this purpose, a special meta-query is defined.  A DNS query for
@@ -248,52 +246,52 @@ func recordsFromService(service *Service, instance *Instance, unannounce bool) (
 	// label <Service> name, plus the same domain, e.g., "_http._tcp.<Domain>".
 	records = append(records, &dns.PTR{
 		Hdr: dns.RR_Header{
-			Name:   fmt.Sprintf("_services._dns-sd._udp.%v.", service.Domain),
+			Name:   fmt.Sprintf("_services._dns-sd._udp.%v.", ty.Domain),
 			Rrtype: dns.TypePTR,
 			Class:  sharedRecordClass,
 			Ttl:    defaultTTL,
 		},
-		Ptr: fmt.Sprintf("%v.%v.", service.Type, service.Domain),
+		Ptr: fmt.Sprintf("%v.%v.", ty.Name, ty.Domain),
 	})
 
 	// SRV record
 	records = append(records, &dns.SRV{
 		Hdr: dns.RR_Header{
-			Name:   instancePath,
+			Name:   servicePath,
 			Rrtype: dns.TypeSRV,
 			Class:  uniqueRecordClass,
 			Ttl:    hostRecordTTL,
 		},
-		Port:   instance.Port,
+		Port:   svc.Port,
 		Target: hostname,
 	})
 
 	// TXT record
 	records = append(records, &dns.TXT{
 		Hdr: dns.RR_Header{
-			Name:   instancePath,
+			Name:   servicePath,
 			Rrtype: dns.TypeTXT,
 			Class:  uniqueRecordClass,
 			Ttl:    defaultTTL,
 		},
-		Txt: instance.Text,
+		Txt: svc.Text,
 	})
 
 	// NSEC for SRV, TXT
 	// See RFC 6762 Section 6.1: Negative Responses
 	records = append(records, &dns.NSEC{
 		Hdr: dns.RR_Header{
-			Name:   instancePath,
+			Name:   servicePath,
 			Rrtype: dns.TypeNSEC,
 			Class:  uniqueRecordClass,
 			Ttl:    defaultTTL,
 		},
-		NextDomain: instancePath,
+		NextDomain: servicePath,
 		TypeBitMap: []uint16{dns.TypeTXT, dns.TypeSRV},
 	})
 
 	// A and AAAA records
-	for _, addr := range instance.Addrs {
+	for _, addr := range svc.Addrs {
 		if addr.Is4() {
 			records = append(records, &dns.A{
 				Hdr: dns.RR_Header{

@@ -11,13 +11,14 @@ import (
 	"github.com/miekg/dns"
 )
 
-// A service identifies an application or protocol, e.g. a http server, printer or an IoT device.
-type Service struct {
+// A service type which identifies an application or protocol, e.g. a http server, printer or an IoT
+// device.
+type Type struct {
 
-	// Service name and protocol, on the form `_my-service._tcp` or `_my-service._udp`
-	Type string `json:"type"`
+	// Service type name, on the form `_my-service._tcp` or `_my-service._udp`
+	Name string `json:"type"`
 
-	// Service subtypes, e.g. `_printer`. An instance can be published with multiple subtypes.
+	// Service subtypes, e.g. `_printer`. A service can be published with multiple subtypes.
 	// While browsing, a single subtype can be specified to narrow the query.
 	// See RFC 6763 Section 7.1.
 	Subtypes []string `json:"subtypes"`
@@ -26,44 +27,43 @@ type Service struct {
 	Domain string `json:"domain"`
 }
 
-func (s *Service) String() string {
+func (s *Type) String() string {
 	var sub string
 	if len(s.Subtypes) > 0 {
 		sub = "," + strings.Join(s.Subtypes, ",")
 	}
-	return fmt.Sprintf("%s.%s%s", s.Type, s.Domain, sub)
+	return fmt.Sprintf("%s.%s%s", s.Name, s.Domain, sub)
 }
 
-// Service type should be on the form `_my-service._tcp` or `_my-service._udp`. The default
-// domain is `local`.
+// Returns a type based on a string on the form `_my-service._tcp` or `_my-service._udp`.
 //
-// A custom domain and/or subtypes can be provided, e.g.
-// `_my-service._tcp.custom.domain,_printer,_sub1,_sub2` (not recommended).
+// The domain is `local` by default, but can be specified explicitly. Finally, a comma-
+// separated list of subtypes can be added at the end. Here is a full example:
 //
-// Should be validated afterwards.
-func ParseService(service string) *Service {
-	typeParts := strings.Split(service, ",")
-	s := &Service{
-		Type:     typeParts[0],
+// `_my-service._tcp.custom.domain,_printer,_sub1,_sub2`
+func NewType(typeStr string) *Type {
+	typeParts := strings.Split(typeStr, ",")
+	ty := &Type{
+		Name:     typeParts[0],
 		Subtypes: typeParts[1:],
 	}
 	pathParts := strings.Split(typeParts[0], ".")
 	i := min(2, len(pathParts))
-	s.Type = strings.Join(pathParts[0:i], ".")
-	s.Domain = strings.Join(pathParts[i:], ".")
-	if s.Domain == "" {
-		s.Domain = "local"
+	ty.Name = strings.Join(pathParts[0:i], ".")
+	ty.Domain = strings.Join(pathParts[i:], ".")
+	if ty.Domain == "" {
+		ty.Domain = "local"
 	}
-	return s
+	return ty
 }
 
 // Equality *without* subtypes
-func (s *Service) Equal(o *Service) bool {
-	return s.Type == o.Type && s.Domain == o.Domain
+func (s *Type) Equal(o *Type) bool {
+	return s.Name == o.Name && s.Domain == o.Domain
 }
 
-func (s *Service) normalize() {
-	s.Type = strings.ToLower(s.Type)
+func (s *Type) normalize() {
+	s.Name = strings.ToLower(s.Name)
 	s.Domain = strings.ToLower(s.Domain)
 	for i, subtype := range s.Subtypes {
 		s.Subtypes[i] = strings.ToLower(subtype)
@@ -72,10 +72,10 @@ func (s *Service) normalize() {
 	slices.Compact(s.Subtypes)
 }
 
-func (s *Service) Validate() error {
+func (s *Type) Validate() error {
 	s.normalize()
-	if labels, ok := dns.IsDomainName(s.Type); !ok || labels != 2 {
-		return fmt.Errorf("invalid service [%s] needs to be dot-separated", s.Type)
+	if labels, ok := dns.IsDomainName(s.Name); !ok || labels != 2 {
+		return fmt.Errorf("invalid service [%s] needs to be dot-separated", s.Name)
 	}
 	if _, ok := dns.IsDomainName(s.Domain); !ok {
 		return fmt.Errorf("invalid domain [%s]", s.Domain)
@@ -88,62 +88,60 @@ func (s *Service) Validate() error {
 	return nil
 }
 
-// Returns the main service type, "_http._tcp.local." and any additional subtypes,
-// e.g. "_printer._sub._http._tcp.local.". Responders only.
+// Returns the main service type, e.g. `_http._tcp.local.` and any additional subtypes,
+// e.g. `_printer._sub._http._tcp.local.`. Responders only.
 //
 // # See RFC6763 Section 7.1
 //
 // Format:
-// <instance>.<service>.<domain>.
-// <instance>._sub.<subtype>.<service>.<domain>.
-func (s *Service) responderNames() (types []string) {
-	types = append(types, fmt.Sprintf("%s.%s.", s.Type, s.Domain))
+// <type>.<domain>.
+// _sub.<subtype>.<type>.<domain>.
+func (s *Type) responderNames() (types []string) {
+	types = append(types, fmt.Sprintf("%s.%s.", s.Name, s.Domain))
 	for _, sub := range s.Subtypes {
-		types = append(types, fmt.Sprintf("%s._sub.%s.%s.", sub, s.Type, s.Domain))
+		types = append(types, fmt.Sprintf("%s._sub.%s.%s.", sub, s.Name, s.Domain))
 	}
 	return
 }
 
-// Returns the query DNS name to use in e.g. a PTR query, and whether the query is a instance
-// resolve query or not.
-func (s *Service) queryName() (str string) {
+// Returns the query DNS name to use in e.g. a PTR query.
+func (s *Type) queryName() (str string) {
 	if len(s.Subtypes) > 0 {
-		return fmt.Sprintf("%s._sub.%s.%s.", s.Subtypes[0], s.Type, s.Domain)
+		return fmt.Sprintf("%s._sub.%s.%s.", s.Subtypes[0], s.Name, s.Domain)
 	} else {
-		return fmt.Sprintf("%s.%s.", s.Type, s.Domain)
+		return fmt.Sprintf("%s.%s.", s.Name, s.Domain)
 	}
 }
 
-// Returns a complete service instance path, e.g. `MyDemo\ Service._foobar._tcp.local.`,
-// which is composed from service instance name, service name and a domain.
-func instancePath(s *Service, e *Instance) string {
-	return fmt.Sprintf("%s.%s.%s.", e.escapeName(), s.Type, s.Domain)
+// Returns a complete service path, e.g. `MyDemo\ Service._foobar._tcp.local.`,
+// which is composed from service name, its main type and a domain.
+func servicePath(s *Type, e *Service) string {
+	return fmt.Sprintf("%s.%s.%s.", e.escapeName(), s.Name, s.Domain)
 }
 
-// Parse an instance path
-func parseInstancePath(s string) (service *Service, instance string, err error) {
+// Parse a service path into a service type and its name
+func parseServicePath(s string) (ty *Type, name string, err error) {
 	parts := dns.SplitDomainName(s)
-	// ["_sub", subtype, ...]
 	var subtypes []string
-	// [instance, service-id, service-proto, domain...]
+	// [service, type-identifier, type-proto, domain...]
 	if len(parts) < 4 {
 		return nil, "", fmt.Errorf("not enough components")
 	}
-	// 4.3.  Internal Handling of Names says that instance name may contain dots.
-	instance = unescapeDns(parts[0])
-	ty := fmt.Sprintf("%s.%s", parts[1], parts[2])
+	// The service name may contain dots.
+	name = unescapeDns(parts[0])
+	typeName := fmt.Sprintf("%s.%s", parts[1], parts[2])
 	domain := strings.Join(parts[3:], ".")
-	service = &Service{ty, subtypes, domain}
-	if err := service.Validate(); err != nil {
+	ty = &Type{typeName, subtypes, domain}
+	if err := ty.Validate(); err != nil {
 		return nil, "", err
 	}
-	return service, instance, nil
+	return ty, name, nil
 }
 
-// An instance of a specific service on the local network. It is reachable at the advertised
-// addresses and port number.
-type Instance struct {
-	// A name that identifies the instance within the service space, e.g. `Office Printer`
+// A service provided on the local network. It is reachable at the advertised addresses and port
+// number.
+type Service struct {
+	// A name that identifies a service of a given type, e.g. `Office Printer`
 	Name string `json:"name"`
 
 	// A non-zero port number
@@ -163,13 +161,13 @@ type Instance struct {
 	seenAt time.Time
 }
 
-func (i *Instance) String() string {
+func (i *Service) String() string {
 	return fmt.Sprintf("%v (%v)", i.Name, i.Hostname)
 }
 
-func (i *Instance) Validate() error {
+func (i *Service) Validate() error {
 	if i.Hostname == "" {
-		return errors.New("no instance specified")
+		return errors.New("no name specified")
 	}
 	if i.Hostname == "" {
 		return errors.New("no hostname specified")
@@ -180,11 +178,11 @@ func (i *Instance) Validate() error {
 	return nil
 }
 
-func (i *Instance) hostname() string {
+func (i *Service) hostname() string {
 	return fmt.Sprintf("%v.", i.Hostname)
 }
 
-func (i *Instance) Equal(o *Instance) bool {
+func (i *Service) Equal(o *Service) bool {
 	if i.Hostname != o.Hostname || i.Port != o.Port || !slices.Equal(i.Text, o.Text) {
 		return false
 	}
@@ -194,6 +192,6 @@ func (i *Instance) Equal(o *Instance) bool {
 
 // RFC 6763 Section 4.3: [...] the <Instance> portion is allowed to contain any characters
 // Spaces and backslashes are escaped by "github.com/miekg/dns".
-func (s *Instance) escapeName() string {
+func (s *Service) escapeName() string {
 	return strings.ReplaceAll(s.Name, ".", "\\.")
 }

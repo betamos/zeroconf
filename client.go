@@ -26,7 +26,7 @@ const (
 
 var defaultHostname, _ = os.Hostname()
 
-// A client which publishes and/or browses for instances.
+// A client which publishes and/or browses for services.
 type Client struct {
 	wg     sync.WaitGroup
 	conn   *conn
@@ -132,7 +132,7 @@ func (c *Client) Reload() {
 	}
 }
 
-// Unannounces any published instances and then closes the network conn. No more events are produced
+// Unannounces any published services and then closes the network conn. No more events are produced
 // afterwards.
 func (c *Client) Close() error {
 	c.conn.SetReadDeadline(time.Now())
@@ -147,19 +147,19 @@ func (c *Client) Close() error {
 // Generate DNS records with the IPs (A/AAAA) for the provided interface (unless addrs were
 // provided by the user).
 func (c *Client) recordsForIface(iface *connInterface, unannounce bool) []dns.RR {
-	// Copy the instance to create a new one with the right ips
-	i := *c.opts.publisher.instance
+	// Copy the service to create a new one with the right ips
+	svc := *c.opts.publisher.svc
 
-	if len(i.Addrs) == 0 {
-		i.Addrs = append(i.Addrs, iface.v4...)
-		i.Addrs = append(i.Addrs, iface.v6...)
+	if len(svc.Addrs) == 0 {
+		svc.Addrs = append(svc.Addrs, iface.v4...)
+		svc.Addrs = append(svc.Addrs, iface.v6...)
 	}
 
-	return recordsFromService(c.opts.publisher.service, &i, unannounce)
+	return recordsFromService(c.opts.publisher.ty, &svc, unannounce)
 }
 
 func (c *Client) handleQuery(msg msgMeta) error {
-	if c.opts.publisher.service == nil {
+	if c.opts.publisher.svc == nil {
 		return nil
 	}
 	// RFC6762 Section 8.2: Probing messages are ignored, for now.
@@ -236,18 +236,18 @@ func (c *Client) broadcastRecords(unannounce bool) error {
 
 func (c *Client) advanceBrowser(now time.Time, msg *msgMeta, isPeriodic bool) (next time.Time) {
 	c.opts.browser.Advance(now)
-	var is []*Instance
+	var svcs []*Service
 	if msg != nil {
-		is = instancesFromRecords(msg.Msg, c.opts.browser.service)
+		svcs = servicesFromRecords(msg.Msg, c.opts.browser.ty)
 	}
-	for _, i := range is {
-		if c.opts.publisher != nil && i.Name == c.opts.publisher.instance.Name {
+	for _, svc := range svcs {
+		if c.opts.publisher != nil && svc.Name == c.opts.publisher.svc.Name {
 			continue
 		}
-		i.ttl = min(i.ttl, c.opts.maxAge)
+		svc.ttl = min(svc.ttl, c.opts.maxAge)
 
-		// TODO: Debug log when instances are refreshed?
-		c.opts.browser.Put(i)
+		// TODO: Debug log when services are refreshed?
+		c.opts.browser.Put(svc)
 	}
 	if c.opts.browser.ShouldQuery() || isPeriodic {
 		err := c.broadcastQuery()
@@ -261,13 +261,13 @@ func (c *Client) advanceBrowser(now time.Time, msg *msgMeta, isPeriodic bool) (n
 func (c *Client) broadcastQuery() error {
 	m := new(dns.Msg)
 	m.Question = append(m.Question, dns.Question{
-		Name:   c.opts.browser.service.queryName(),
+		Name:   c.opts.browser.ty.queryName(),
 		Qtype:  dns.TypePTR,
 		Qclass: dns.ClassINET,
 	})
 	if pub := c.opts.publisher; pub != nil {
-		// Include self-published instance as "known answers", to avoid responding to ourselves
-		m.Answer = ptrRecords(pub.service, pub.instance, false)
+		// Include self-published service as "known answers", to avoid responding to ourselves
+		m.Answer = ptrRecords(pub.ty, pub.svc, false)
 	}
 	m.Id = dns.Id()
 	m.Compress = true

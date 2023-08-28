@@ -16,18 +16,18 @@ import (
 )
 
 var (
-	browse = flag.Bool("b", false, "Browse for instances")
-	name   = flag.String("p", "", "Publish an instance with the given name.")
+	browse = flag.Bool("b", false, "Browse for services")
+	name   = flag.String("p", "", "Publish a service with the given name.")
 
-	serviceStr = flag.String("service", "_zeroconf-go._tcp", "Set the service type to browse or publish.")
+	typeStr = flag.String("type", "_zeroconf-go._tcp", "The service type.")
 
-	hostname = flag.String("hostname", "", "Override hostname for the instance.")
-	port     = flag.Int("port", 42424, "Override the port for the instance.")
-	addrs    = flag.String("addrs", "", "Override IP addrs for the instance (comma-separated).")
+	hostname = flag.String("hostname", "", "Override hostname for the service.")
+	port     = flag.Int("port", 42424, "Override the port for the service.")
+	addrs    = flag.String("addrs", "", "Override IP addrs for the service (comma-separated).")
 
 	network = flag.String("net", "udp", "Change the network to use ipv4 or ipv6 only.")
 	maxAge  = flag.Int("max-age", 60, "Set the max age in seconds.")
-	text    = flag.String("text", "", "Text values for the instance (comma-separated).")
+	text    = flag.String("text", "", "Text values for the service (comma-separated).")
 	reload  = flag.Int("reload", 0, "Reload every n seconds. 0 means never.")
 
 	verbose = flag.Bool("v", false, "Verbose mode, with debug output.")
@@ -45,7 +45,7 @@ func main() {
 		log.SetFlags(log.Ltime)
 	}
 
-	instance := &zeroconf.Instance{
+	svc := &zeroconf.Service{
 		Name: *name,
 		Port: uint16(*port),
 		Text: split(*text),
@@ -53,9 +53,9 @@ func main() {
 		Hostname: *hostname,
 	}
 	for _, addr := range split(*addrs) {
-		instance.Addrs = append(instance.Addrs, netip.MustParseAddr(addr))
+		svc.Addrs = append(svc.Addrs, netip.MustParseAddr(addr))
 	}
-	service := zeroconf.ParseService(*serviceStr)
+	ty := zeroconf.NewType(*typeStr)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -67,15 +67,15 @@ func main() {
 
 	var err error
 	if *name != "" {
-		opts.Publish(service, instance)
-		log.Printf("publishing to [%v]: %v\n", service, instance)
+		opts.Publish(ty, svc)
+		log.Printf("publishing to [%v]: %v\n", ty, svc)
 
 	}
 	if *browse {
-		opts.Browse(service, func(event zeroconf.Event) {
+		opts.Browse(ty, func(event zeroconf.Event) {
 			log.Println(event, event.Text, event.Addrs)
 		})
-		log.Printf("browsing for [%v]\n", service)
+		log.Printf("browsing for [%v]\n", ty)
 	}
 	if !*browse && *name == "" {
 		log.Fatalln("either -p <name> (publish) or -b (browse) must be provided (see -help)")
