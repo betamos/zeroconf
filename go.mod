@@ -1,4 +1,4 @@
-module github.com/betamos/zeroconf/v2
+module github.com/betamos/zeroconf
 
 go 1.21
 
