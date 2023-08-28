@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -109,6 +110,17 @@ type Service struct {
 	// Internal expiry data
 	ttl    time.Duration
 	seenAt time.Time
+}
+
+// Create a new service for publishing. The hostname is generated based on `os.Hostname()`.
+// Choose a unique name to avoid conflicts with other services of the same type.
+func NewService(name string, port uint16) *Service {
+	osHostname, _ := os.Hostname()
+	return &Service{
+		Name:     name,
+		Port:     port,
+		Hostname: ensureSuffix(osHostname, ".local"),
+	}
 }
 
 func (i *Service) String() string {

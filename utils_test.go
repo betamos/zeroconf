@@ -35,3 +35,19 @@ func TestUnescapeDDD(t *testing.T) {
 		t.Fatalf("expected [%v], got [%v]", expected, got)
 	}
 }
+
+func TestEnsureSuffix(t *testing.T) {
+	got := ensureSuffix("foo", ".local")
+	expected := "foo.local"
+	if got != expected {
+		t.Fatalf("expected [%v], got [%v]", expected, got)
+	}
+}
+
+func TestEnsureSuffixAlreadyPresent(t *testing.T) {
+	got := ensureSuffix("foo.local", ".local")
+	expected := "foo.local"
+	if got != expected {
+		t.Fatalf("expected [%v], got [%v]", expected, got)
+	}
+}

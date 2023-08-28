@@ -2,10 +2,8 @@ package zeroconf
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
-	"strings"
 	"time"
 )
 
@@ -62,31 +60,27 @@ func (o *Options) Validate() error {
 	return errors.Join(errs...)
 }
 
-// Publish a service of a given type. Name and Port are required.
-// Addrs and Hostname are determined automatically, but can be overriden.
-func (o *Options) Publish(s *Type, i *Service) *Options {
-	if i.Hostname == "" {
-		hostname, _ := strings.CutSuffix(defaultHostname, ".local")
-		i.Hostname = fmt.Sprintf("%v.%v", hostname, s.Domain)
-	}
-	o.publisher = &publisher{s, i}
+// Publish a service of a given type. Name, port and hostname are required.
+// Addrs are determined dynamically based on network interfaces, but can be overriden.
+func (o *Options) Publish(ty *Type, svc *Service) *Options {
+	o.publisher = &publisher{ty, svc}
 	return o
 }
 
-// Browse for services of a given type and notify the provided callback as services come and go.
-// Any self-published services are ignored.
+// Browse for services of a given type. The callback is invoked on changes. Self-published services
+// are ignored.
 //
 // Optionally, a single subtype may be provided to narrow the search.
-func (o *Options) Browse(s *Type, cb func(Event)) *Options {
+func (o *Options) Browse(ty *Type, cb func(Event)) *Options {
 	o.browser = &browser{
-		ty:    s,
+		ty:    ty,
 		cache: newCache(cb),
 	}
 	return o
 }
 
-// While browsing, override received TTL (normally 120s) with a custom duration. This will remove
-// stale services quicker, but results in more frequent queries.
+// While browsing, override received TTL (normally 120s) with a custom duration. This can help
+// detect stale services faster, but results in more frequent "live-check" queries.
 func (o *Options) MaxAge(age time.Duration) *Options {
 	o.maxAge = max(5*time.Second, age)
 	return o

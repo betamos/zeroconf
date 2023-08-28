@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"os"
 	"sync"
 	"time"
 
@@ -23,8 +22,6 @@ const (
 	// Enough to send a UDP packet without causing a timeout error
 	writeTimeout = 10 * time.Millisecond
 )
-
-var defaultHostname, _ = os.Hostname()
 
 // A client which publishes and/or browses for services.
 type Client struct {

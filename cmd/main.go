@@ -45,12 +45,10 @@ func main() {
 		log.SetFlags(log.Ltime)
 	}
 
-	svc := &zeroconf.Service{
-		Name: *name,
-		Port: uint16(*port),
-		Text: split(*text),
-
-		Hostname: *hostname,
+	svc := zeroconf.NewService(*name, uint16(*port))
+	svc.Text = split(*text)
+	if *hostname != "" {
+		svc.Hostname = *hostname
 	}
 	for _, addr := range split(*addrs) {
 		svc.Addrs = append(svc.Addrs, netip.MustParseAddr(addr))

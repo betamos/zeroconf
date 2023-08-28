@@ -38,6 +38,14 @@ func trimDot(s string) string {
 	return strings.TrimRight(s, ".")
 }
 
+// Appends a suffix to a string if not already present
+func ensureSuffix(s, suffix string) string {
+	if strings.HasSuffix(s, suffix) {
+		return s
+	}
+	return s + suffix
+}
+
 // Returns the earliest of at least one times
 func earliest(ts ...time.Time) time.Time {
 	tMin := ts[0]
