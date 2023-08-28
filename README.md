@@ -11,6 +11,18 @@ It is tested on Windows, macOS and Linux and is compatible with [Avahi](http://a
 - [RFC 6762](https://tools.ietf.org/html/rfc6762): Multicast DNS (mDNS)
 - [RFC 6763](https://tools.ietf.org/html/rfc6763): DNS Service Discovery (DNS-SD)
 
+## Features
+
+* [x] Monitors updates, expiry and unannouncements of services
+* [x] Shared socket with minimal network traffic
+* [x] Advertises a small set of IPs per network interface\*
+* [x] Hot-reload after network changes or sleeping (see below)
+* [x] Uses modern Go 1.21 with `slog`, `netip`, etc
+
+\* Some other clients advertise all IPs to every interface, which results in many
+redundant and unreachable addresses. This library advertises at most 3 IPs per network interface
+(IPv4, IPv6 link-local and IPv6 global).
+
 ## Usage
 
 First, let's install the library:
@@ -38,17 +50,28 @@ client, err := zeroconf.New().
     Browse(chat, func(e zeroconf.Event) {
         // Prints e.g. `[+] Bryan`, but this would be a good time to connect to the peer!
         log.Println(e.Op, e.Name)
-    })
-    .Open()
+    }).
+    Open()
 if err != nil {
     return err
 }
 defer client.Close() // Don't forget to close, to notify others that we're going away
 ```
 
+Devices like laptops move around a lot. When networks change or a device wakes up from sleep,
+zeroconf needs to be notified:
+
+```go
+// Reloads network interfaces and resets periodic timers
+client.Reload()
+```
+
+Monitoring for changes is out of scope for this project. You could use a ticker and reload
+every N minutes.
+
 ## CLI
 
-The package contains a CLI which can both browse and publish:
+This package also contains a CLI which can both browse and publish:
 
 ```bash
 # Browse and publish at the same time (run on two different machines)
@@ -67,29 +90,6 @@ You should see services coming and going, like so:
 01:26:45 [-] Someone's iPhone ...
 ```
 
-## Features
-
-* [x] Publish and browse on the same UDP port
-* [x] Monitors for updates, expiry and unannouncements of services
-* [x] Handles IPv4 and IPv6 on multiple network interfaces
-* [x] Minimal network traffic
-* [x] Hot-reload after network changes or sleeping (see below)
-* [x] Uses modern Go 1.21 with `slog`, `netip`, etc
-
-## Hot-reloading
-
-Some devices, like laptops, move around a lot. Whenever a device connects to a new network,
-or wakes up after sleep, the zeroconf client needs to be aware of these changes for both
-browsing and publishing to work correctly:
-
-```go
-// Reloads network interfaces and resets periodic timers
-client.Reload()
-```
-
-Monitoring for changes is out of scope for this project. You could use a ticker and reload
-every N minutes.
-
 ## Missing features
 
 - **Conflict resolution** is not implemented, so it's important to pick a unique service name to
@@ -97,7 +97,7 @@ every N minutes.
   suffix, e.g "Jennifer [3298]".
 - **One-shot queries** (lookup) is currently not supported. As a workaround, you can browse
   and filter out the instance yourself.
-- **Meta-queries** are also not supported.
+- **Meta-queries** are also not supported (but we still respond to them correctly).
 
 ## About
 
