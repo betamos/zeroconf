@@ -1,7 +1,7 @@
 Zeroconf Service Discovery
 ==========================
 [![GoDoc](https://godoc.org/github.com/betamos/zeroconf?status.svg)](https://godoc.org/github.com/betamos/zeroconf)
-[![Tests](https://github.com/betamos/zeroconf/actions/workflows/go-test.yml/badge.svg)](https://github.com/libp2p/zeroconf/actions/workflows/go-test.yml)
+[![Tests](https://github.com/betamos/zeroconf/actions/workflows/go-test.yml/badge.svg)](https://github.com/betamos/zeroconf/actions/workflows/go-test.yml)
 
 Zeroconf is a pure Golang library for discovering and publishing services on the local network.
 
