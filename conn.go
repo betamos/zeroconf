@@ -248,7 +248,7 @@ func netIfaceAddrs(iface net.Interface) (v4, v6 []netip.Addr, err error) {
 	}
 	for _, address := range ifaceAddrs {
 		ipnet, ok := address.(*net.IPNet)
-		if !ok || ipnet.IP.IsLoopback() {
+		if !ok {
 			continue
 		}
 		ip, ok := netip.AddrFromSlice(ipnet.IP)
@@ -258,16 +258,14 @@ func netIfaceAddrs(iface net.Interface) (v4, v6 []netip.Addr, err error) {
 		ip = ip.Unmap()
 		if ip.Is4() {
 			v4 = append(v4, ip)
-		} else if ip.Is6() {
-			if ip.IsGlobalUnicast() {
+		} else if ip.Is6() && ip.IsGlobalUnicast() {
 				v6 = append(v6, ip)
-			} else if ip.IsLinkLocalUnicast() {
+		} else if ip.Is6() && ip.IsLinkLocalUnicast() {
 				v6local = append(v6local, ip)
 			}
 		}
-	}
-	// 1 ip of each type is enough
-	v4, v6 = max1(v4), append(max1(v6), max1(v6local)...)
+	v4 = max1(v4) // 1 ip of each type is enough
+	v6 = append(max1(v6), max1(v6local)...)
 	return
 }
 
