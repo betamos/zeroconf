@@ -28,14 +28,6 @@ type Type struct {
 	Domain string `json:"domain"`
 }
 
-func (t *Type) String() string {
-	var sub string
-	if len(t.Subtypes) > 0 {
-		sub = "," + strings.Join(t.Subtypes, ",")
-	}
-	return fmt.Sprintf("%s.%s%s", t.Name, t.Domain, sub)
-}
-
 // Returns a type based on a string on the form `_my-service._tcp` or `_my-service._udp`.
 //
 // The domain is `local` by default, but can be specified explicitly. Finally, a comma-
@@ -58,34 +50,43 @@ func NewType(typeStr string) *Type {
 	return ty
 }
 
+// Returns the type, domain and any subtypes, e.g. `_chat._tcp.local,_emoji`.
+func (t *Type) String() string {
+	var sub string
+	if len(t.Subtypes) > 0 {
+		sub = "," + strings.Join(t.Subtypes, ",")
+	}
+	return fmt.Sprintf("%s.%s%s", t.Name, t.Domain, sub)
+}
+
 // Returns true if the types are equal (excluding subtypes)
-func (s *Type) Equal(o *Type) bool {
-	if s == o {
+func (t *Type) Equal(o *Type) bool {
+	if t == o {
 		return true
 	}
-	return s.Name == o.Name && s.Domain == o.Domain
+	return t.Name == o.Name && t.Domain == o.Domain
 }
 
-func (s *Type) normalize() {
-	s.Name = strings.ToLower(s.Name)
-	s.Domain = strings.ToLower(s.Domain)
-	for i, subtype := range s.Subtypes {
-		s.Subtypes[i] = strings.ToLower(subtype)
+func (t *Type) normalize() {
+	t.Name = strings.ToLower(t.Name)
+	t.Domain = strings.ToLower(t.Domain)
+	for i, subtype := range t.Subtypes {
+		t.Subtypes[i] = strings.ToLower(subtype)
 	}
-	slices.Sort(s.Subtypes)
-	slices.Compact(s.Subtypes)
+	slices.Sort(t.Subtypes)
+	slices.Compact(t.Subtypes)
 }
 
-func (s *Type) Validate() error {
-	s.normalize()
-	if labels, ok := dns.IsDomainName(s.Name); !ok || labels != 2 {
-		return fmt.Errorf("invalid service [%s] needs to be dot-separated", s.Name)
+func (t *Type) Validate() error {
+	t.normalize()
+	if labels, ok := dns.IsDomainName(t.Name); !ok || labels != 2 {
+		return fmt.Errorf("invalid service [%s] needs to be dot-separated", t.Name)
 	}
-	if _, ok := dns.IsDomainName(s.Domain); !ok {
-		return fmt.Errorf("invalid domain [%s]", s.Domain)
+	if _, ok := dns.IsDomainName(t.Domain); !ok {
+		return fmt.Errorf("invalid domain [%s]", t.Domain)
 	}
-	for _, subtype := range s.Subtypes {
-		if labels, ok := dns.IsDomainName(s.Domain); !ok || labels != 1 {
+	for _, subtype := range t.Subtypes {
+		if labels, ok := dns.IsDomainName(t.Domain); !ok || labels != 1 {
 			return fmt.Errorf("invalid subtype [%s]", subtype)
 		}
 	}
