@@ -149,6 +149,15 @@ func (s *Service) Validate() error {
 	return nil
 }
 
+// Returns true if the services have the same identity, meaning they have the same type (excluding
+// subtypes) and service name.
+func (s *Service) Same(o *Service) bool {
+	if s == o {
+		return true
+	}
+	return s.Type.Equal(o.Type) && s.Name == o.Name
+}
+
 // Returns true if the type (excluding subtypes) and all fields are equal.
 func (s *Service) Equal(o *Service) bool {
 	if s == o {
