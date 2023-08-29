@@ -100,11 +100,11 @@ func (c *cache) Advance(now time.Time) {
 }
 
 func (c *cache) Put(svc *Service) {
-	k := svc.Name
+	k := svc.String()
 	svc.seenAt = c.now
 	defer c.refresh()
 
-	svcs := c.services[svc.Name]
+	svcs := c.services[k]
 
 	// Service removed through a "Goodbye Packet"
 	if svc.ttl == 0 {

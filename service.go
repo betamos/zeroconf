@@ -129,8 +129,10 @@ func NewService(ty *Type, name string, port uint16) *Service {
 	}
 }
 
+// Returns the full service path, e.g. `My Computer._chat._tcp.local`. This can be used
+// as a map key.
 func (s *Service) String() string {
-	return fmt.Sprintf("%v (%v)", s.Name, s.Hostname)
+	return fmt.Sprintf("%v.%v.%v", s.Name, s.Type.Name, s.Type.Domain)
 }
 
 func (s *Service) Validate() error {
