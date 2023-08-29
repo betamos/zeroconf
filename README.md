@@ -47,10 +47,10 @@ self := zeroconf.NewService(chat, "Jennifer", 8080)
 
 client, err := zeroconf.New().
     Publish(self).
-    Browse(chat, func(e zeroconf.Event) {
+    Browse(func(e zeroconf.Event) {
         // Prints e.g. `[+] Bryan`, but this would be a good time to connect to the peer!
         log.Println(e.Op, e.Name)
-    }).
+    }, chat).
     Open()
 if err != nil {
     return err
@@ -71,7 +71,7 @@ every N minutes.
 
 ## CLI
 
-This package also contains a CLI which can both browse and publish:
+This package also includes a CLI:
 
 ```bash
 # Browse and publish at the same time (run on two different machines)
@@ -85,10 +85,21 @@ go run ./cmd -b -type _rdlink._tcp
 You should see services coming and going, like so:
 
 ```
-01:23:45 [+] Someone's iPhone ...
-01:23:47 [+] Some Macbook ...
-01:26:45 [-] Someone's iPhone ...
+01:23:45 [+] Someone's iPhone
+01:23:47 [+] Some Macbook
+01:25:45 [-] Someone's iPhone
 ```
+
+If you're testing on the same host, you may see a lot of updates right away (note the `~`):
+
+```
+01:26:45 [+] Computer B
+01:26:45 [~] Computer B
+01:26:45 [~] Computer B
+```
+
+This is normal, and happens because the service is becoming reachable over more interfaces
+quickly. A physically different device is typically only reachable over a single interface.
 
 ## Missing features
 
@@ -98,6 +109,7 @@ You should see services coming and going, like so:
 - **One-shot queries** (lookup) is currently not supported. As a workaround, you can browse
   and filter out the instance yourself.
 - **Meta-queries** are also not supported (but we still respond to them correctly).
+- **Updating services**, such as their TXT records, is not supported. Perhaps it should be?
 
 ## About
 
