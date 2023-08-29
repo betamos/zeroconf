@@ -175,3 +175,14 @@ func (s *Service) Equal(o *Service) bool {
 	// Note we're not "normalizing" addrs here
 	return slices.Equal(s.Addrs, o.Addrs)
 }
+
+// Returns true if this service matches the provided query type (including subtype, if present).
+func (s *Service) Matches(q *Type) bool {
+	if !q.Equal(s.Type) {
+		return false // Main types are not equal
+	}
+	if len(q.Subtypes) == 1 && slices.Index(s.Type.Subtypes, q.Subtypes[0]) == -1 {
+		return false // Expected subtype not found
+	}
+	return true
+}
