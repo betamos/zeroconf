@@ -106,9 +106,9 @@ func servicePath(svc *Service) string {
 }
 
 // Parse a service path into a service type and its name
+// E.g. `Jessica._chat._tcp.local.`
 func parseServicePath(s string) (svc *Service, err error) {
 	parts := dns.SplitDomainName(s)
-	var subtypes []string
 	// [service, type-identifier, type-proto, domain...]
 	if len(parts) < 4 {
 		return nil, fmt.Errorf("not enough components")
@@ -117,11 +117,34 @@ func parseServicePath(s string) (svc *Service, err error) {
 	name := unescapeDns(parts[0])
 	typeName := fmt.Sprintf("%s.%s", parts[1], parts[2])
 	domain := strings.Join(parts[3:], ".")
-	ty := &Type{typeName, subtypes, domain}
+	ty := &Type{typeName, nil, domain}
 	if err := ty.Validate(); err != nil {
 		return nil, err
 	}
 	return &Service{Type: ty, Name: name}, nil
+}
+
+// Parse a query into a service type and its name
+// E.g. `_chat._tcp.local.` or `_emoji._sub._chat._tcp.local.`
+func parseQueryName(s string) (ty *Type, err error) {
+	parts := dns.SplitDomainName(s)
+	var subtypes []string
+	// [service, type-identifier, type-proto, domain...]
+	if len(parts) > 2 && parts[1] == "_sub" {
+		subtypes = []string{parts[0]}
+		parts = parts[2:]
+	}
+	if len(parts) < 3 {
+		return nil, fmt.Errorf("not enough components")
+	}
+
+	typeName := fmt.Sprintf("%s.%s", parts[0], parts[1])
+	domain := strings.Join(parts[2:], ".")
+	ty = &Type{typeName, subtypes, domain}
+	if err := ty.Validate(); err != nil {
+		return nil, err
+	}
+	return ty, nil
 }
 
 // Returns true if the record is an answer to question
