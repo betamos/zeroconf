@@ -14,7 +14,7 @@ It is tested on Windows, macOS and Linux and is compatible with [Avahi](http://a
 ## Features
 
 * [x] Monitors updates, expiry and unannouncements of services
-* [x] Shared socket with minimal network traffic
+* [x] Publish and browse on the same socket, with minimal network traffic
 * [x] Advertises a small set of IPs per network interface\*
 * [x] Hot-reload after network changes or sleeping (see below)
 * [x] Uses modern Go 1.21 with `slog`, `netip`, etc
