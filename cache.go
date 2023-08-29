@@ -129,7 +129,7 @@ func (c *cache) Put(svc *Service) {
 	// Invariant: len(is) > 0, which means this is an update
 
 	// Already "equal", simply update TTL without notifying the user
-	if idx := slices.IndexFunc(svcs, svc.Equal); idx > -1 {
+	if idx := slices.IndexFunc(svcs, svc.deepEqual); idx > -1 {
 		svcs[idx] = svc
 		slices.SortFunc(svcs, byLastSeen)
 		return

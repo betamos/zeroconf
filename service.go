@@ -152,17 +152,17 @@ func (s *Service) Validate() error {
 	return nil
 }
 
-// Returns true if the services have the same identity, meaning they have the same type (excluding
-// subtypes) and service name.
-func (s *Service) Same(o *Service) bool {
+// Returns true if the services have the same identity, meaning they have the same name and type
+// (excluding subtypes). This is equivalent to comparing their string representations.
+func (s *Service) Equal(o *Service) bool {
 	if s == o {
 		return true
 	}
 	return s.Type.Equal(o.Type) && s.Name == o.Name
 }
 
-// Returns true if the type (excluding subtypes) and all fields are equal.
-func (s *Service) Equal(o *Service) bool {
+// Returns true if all fields are equal, except subtypes.
+func (s *Service) deepEqual(o *Service) bool {
 	if s == o {
 		return true
 	}
