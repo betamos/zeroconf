@@ -8,7 +8,7 @@ import (
 )
 
 type browser struct {
-	ty *Type
+	types []*Type
 	*cache
 }
 
@@ -43,9 +43,14 @@ func (o *Options) Validate() error {
 	}
 	var errs []error
 	if o.browser != nil {
-		errs = append(errs, o.browser.ty.Validate())
-		if len(o.browser.ty.Subtypes) > 1 {
-			errs = append(errs, errors.New("too many subtypes for browsing"))
+		if len(o.browser.types) == 0 {
+			return errors.New("no browse types were provided")
+		}
+		for _, ty := range o.browser.types {
+			errs = append(errs, ty.Validate())
+			if len(ty.Subtypes) > 1 {
+				errs = append(errs, errors.New("too many subtypes for browsing"))
+			}
 		}
 	}
 	if o.publish != nil {
@@ -61,13 +66,13 @@ func (o *Options) Publish(svc *Service) *Options {
 	return o
 }
 
-// Browse for services of a given type. The callback is invoked on changes. Self-published services
-// are ignored.
+// Browse for services of the given type(s). The callback is invoked on changes. Self-published
+// services are ignored.
 //
-// Optionally, a single subtype may be provided to narrow the search.
-func (o *Options) Browse(ty *Type, cb func(Event)) *Options {
+// A type may have at most one subtype, in order to narrow the search.
+func (o *Options) Browse(cb func(Event), types ...*Type) *Options {
 	o.browser = &browser{
-		ty:    ty,
+		types: types,
 		cache: newCache(cb),
 	}
 	return o

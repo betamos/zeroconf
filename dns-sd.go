@@ -206,46 +206,45 @@ func answerTo(records, knowns []dns.RR, question dns.Question) (answers, extras 
 }
 
 // Returns any services from the msg that matches the provided search type.
-func servicesFromRecords(msg *dns.Msg, search *Type) (services []*Service) {
+func servicesFromRecords(msg *dns.Msg) (services []*Service) {
 	// TODO: Support meta-queries
 	var (
-		answers  = append(msg.Answer, msg.Extra...)
-		question = queryName(search)
-		m        = make(map[string]*Service, 1) // temporary map of service paths to services
-		addrMap  = make(map[string][]netip.Addr, 1)
-		svc      *Service
+		answers = append(msg.Answer, msg.Extra...)
+		m       = make(map[string]*Service, 1) // temporary map of service paths to services
+		addrMap = make(map[string][]netip.Addr, 1)
+		svc     *Service
 	)
 	if len(msg.Question) > 0 {
 		return
 	}
 
-	// PTR, then SRV + TXT, then A and AAAA. The following loop depends on it
+	// SRV, then PTR + TXT, then A and AAAA. The following loop depends on it
 	// Note that stable sort is necessary to preserve order of A and AAAA records
 	slices.SortStableFunc(answers, byRecordType)
 
 	for _, answer := range answers {
 		switch rr := answer.(type) {
 		// Phase 1: create services
-		case *dns.PTR:
-			// TODO: Parse type path?
-			if rr.Hdr.Name != question { // match question, e.g. `_printer._sub._http._tcp.local.`
-				continue
-			}
+		case *dns.SRV:
 
 			// pointer to service path, e.g. `My Printer._http._tcp.`
-			svc, err := parseServicePath(rr.Ptr)
-			if err == nil && search.Equal(svc.Type) {
-				m[rr.Ptr] = svc
-			}
-
-		// Phase 2: populate other fields
-		case *dns.SRV:
-			if svc = m[rr.Hdr.Name]; svc == nil {
+			if svc, _ = parseServicePath(rr.Hdr.Name); svc == nil {
 				continue
 			}
 			svc.Hostname = rr.Target
 			svc.Port = rr.Port
 			svc.ttl = time.Second * time.Duration(rr.Hdr.Ttl)
+			m[rr.Hdr.Name] = svc
+
+		// Phase 2: populate subtypes and text
+		case *dns.PTR:
+			if svc = m[rr.Ptr]; svc == nil {
+				continue
+			}
+			// parse type from query, e.g. `_printer._sub._http._tcp.local.`
+			if ty, _ := parseQueryName(rr.Hdr.Name); ty != nil && ty.Equal(svc.Type) {
+				svc.Type.Subtypes = append(svc.Type.Subtypes, ty.Subtypes...)
+			}
 		case *dns.TXT:
 			if svc = m[rr.Hdr.Name]; svc == nil {
 				continue
@@ -264,6 +263,7 @@ func servicesFromRecords(msg *dns.Msg, search *Type) (services []*Service) {
 		}
 	}
 
+	// Phase 4: add IPs
 	for _, svc := range m {
 		svc.Addrs = addrMap[svc.Hostname]
 
@@ -407,16 +407,16 @@ func recordsFromService(svc *Service, unannounce bool) (records []dns.RR) {
 	return
 }
 
-// Compare records by type for indirection order of DNS-SD
+// Compare records to aid in service construction from a record list
 func byRecordType(a, b dns.RR) int {
 	return recordOrder(a) - recordOrder(b)
 }
 
 func recordOrder(rr dns.RR) int {
 	switch rr.Header().Rrtype {
-	case dns.TypePTR: // Points at SRV, TXT
+	case dns.TypeSRV:
 		return 0
-	case dns.TypeSRV, dns.TypeTXT: // Points at A, AAAA
+	case dns.TypePTR, dns.TypeTXT:
 		return 1
 	case dns.TypeA, dns.TypeAAAA:
 		return 2

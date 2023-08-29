@@ -35,13 +35,15 @@ func testBasic(t *testing.T, svc *Service) {
 	defer pub.Close()
 
 	var found *Service
-	browser, err := New().Browse(svc.Type, func(e Event) {
-		e.Addrs = nil
-		if e.Op == OpAdded {
-			found = e.Service
-			cancel()
-		}
-	}).Open()
+	browser, err := New().
+		Browse(func(e Event) {
+			e.Addrs = nil
+			if e.Op == OpAdded {
+				found = e.Service
+				cancel()
+			}
+		}, svc.Type).
+		Open()
 	if err != nil {
 		t.Fatalf("failed creating browser %v", err)
 	}

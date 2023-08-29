@@ -70,9 +70,9 @@ func main() {
 
 	}
 	if *browse {
-		opts.Browse(ty, func(event zeroconf.Event) {
+		opts.Browse(func(event zeroconf.Event) {
 			log.Println(event, event.Text, event.Addrs)
-		})
+		}, ty)
 		log.Printf("browsing for [%v]\n", ty)
 	}
 	if !*browse && *name == "" {

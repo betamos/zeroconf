@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 
@@ -235,7 +236,7 @@ func (c *Client) advanceBrowser(now time.Time, msg *msgMeta, isPeriodic bool) (n
 	c.opts.browser.Advance(now)
 	var svcs []*Service
 	if msg != nil {
-		svcs = servicesFromRecords(msg.Msg, c.opts.browser.ty)
+		svcs = servicesFromRecords(msg.Msg)
 	}
 	for _, svc := range svcs {
 		// Exclude self-published services
@@ -244,6 +245,10 @@ func (c *Client) advanceBrowser(now time.Time, msg *msgMeta, isPeriodic bool) (n
 		}
 		svc.ttl = min(svc.ttl, c.opts.maxAge)
 
+		// Ensure the service matches any of our "search types"
+		if slices.IndexFunc(c.opts.browser.types, svc.Matches) == -1 {
+			continue
+		}
 		// TODO: Debug log when services are refreshed?
 		c.opts.browser.Put(svc)
 	}
@@ -258,11 +263,14 @@ func (c *Client) advanceBrowser(now time.Time, msg *msgMeta, isPeriodic bool) (n
 // Performs the actual query by service name.
 func (c *Client) broadcastQuery() error {
 	m := new(dns.Msg)
-	m.Question = append(m.Question, dns.Question{
-		Name:   queryName(c.opts.browser.ty),
-		Qtype:  dns.TypePTR,
-		Qclass: dns.ClassINET,
-	})
+	// Query for all browser types
+	for _, ty := range c.opts.browser.types {
+		m.Question = append(m.Question, dns.Question{
+			Name:   queryName(ty),
+			Qtype:  dns.TypePTR,
+			Qclass: dns.ClassINET,
+		})
+	}
 	if c.opts.publish != nil {
 		// Include self-published service as "known answers", to avoid responding to ourselves
 		m.Answer = ptrRecords(c.opts.publish, false)
