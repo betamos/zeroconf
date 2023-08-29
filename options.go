@@ -19,20 +19,17 @@ type Options struct {
 	browser *browser
 	publish *Service
 
-	maxPeriod time.Duration // Max period to perform periodic tasks - like sending queries
-	ifacesFn  func() ([]net.Interface, error)
-	network   string
-	maxAge    time.Duration
+	ifacesFn func() ([]net.Interface, error)
+	network  string
+	expiry   time.Duration
 }
 
 // Returns a new options with default values. Remember to call `Open` at the end to create a client.
 func New() *Options {
 	return &Options{
-		logger:    slog.Default(),
-		network:   "udp",
-		ifacesFn:  net.Interfaces,
-		maxPeriod: time.Minute,
-		maxAge:    75 * time.Minute,
+		logger:   slog.Default(),
+		network:  "udp",
+		ifacesFn: net.Interfaces,
 	}
 }
 
@@ -78,10 +75,12 @@ func (o *Options) Browse(cb func(Event), types ...*Type) *Options {
 	return o
 }
 
-// While browsing, override received TTL (normally 120s) with a custom duration. This can help
-// detect stale services faster, but results in more frequent "live-check" queries.
-func (o *Options) MaxAge(age time.Duration) *Options {
-	o.maxAge = max(5*time.Second, age)
+// While browsing, override received TTL (normally 120s) with a custom duration. A low value,
+// like 30s, can help detect stale services faster, but results in more frequent "live-check"
+// queries. Conversely, a higher value can keep services "around" that tend to be a bit
+// unresponsive. Services that unannounce themselves are always removed immediately.
+func (o *Options) Expiry(age time.Duration) *Options {
+	o.expiry = age
 	return o
 }
 

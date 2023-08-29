@@ -243,7 +243,10 @@ func (c *Client) advanceBrowser(now time.Time, msg *msgMeta, isPeriodic bool) (n
 		if c.opts.publish != nil && svc.Equal(c.opts.publish) {
 			continue
 		}
-		svc.ttl = min(svc.ttl, c.opts.maxAge)
+		// Set custom TTL unless this is an announcement (we treat TTL=1 as intent to unannounce)
+		if c.opts.expiry > 0 && svc.ttl > time.Second {
+			svc.ttl = c.opts.expiry
+		}
 
 		// Ensure the service matches any of our "search types"
 		if slices.IndexFunc(c.opts.browser.types, svc.Matches) == -1 {

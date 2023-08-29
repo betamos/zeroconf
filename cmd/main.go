@@ -26,7 +26,7 @@ var (
 	addrs    = flag.String("addrs", "", "Override IP addrs for the service (comma-separated).")
 
 	network = flag.String("net", "udp", "Change the network to use ipv4 or ipv6 only.")
-	maxAge  = flag.Int("max-age", 60, "Set the max age in seconds.")
+	expiry  = flag.Int("expiry", 0, "Set a custom expiry in seconds.")
 	text    = flag.String("text", "", "Text values for the service (comma-separated).")
 	reload  = flag.Int("reload", 0, "Reload every n seconds. 0 means never.")
 
@@ -60,7 +60,7 @@ func main() {
 
 	opts := zeroconf.New().
 		Logger(slog.Default()).
-		MaxAge(time.Duration(*maxAge) * time.Second).
+		Expiry(time.Duration(*expiry) * time.Second).
 		Network(*network)
 
 	var err error
