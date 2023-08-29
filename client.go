@@ -238,7 +238,8 @@ func (c *Client) advanceBrowser(now time.Time, msg *msgMeta, isPeriodic bool) (n
 		svcs = servicesFromRecords(msg.Msg, c.opts.browser.ty)
 	}
 	for _, svc := range svcs {
-		if c.opts.publish != nil && svc.Name == c.opts.publish.Name {
+		// Exclude self-published services
+		if c.opts.publish != nil && svc.Same(c.opts.publish) {
 			continue
 		}
 		svc.ttl = min(svc.ttl, c.opts.maxAge)

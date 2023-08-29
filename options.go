@@ -7,11 +7,6 @@ import (
 	"time"
 )
 
-type publisher struct {
-	ty  *Type
-	svc *Service
-}
-
 type browser struct {
 	ty *Type
 	*cache
