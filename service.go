@@ -157,7 +157,7 @@ func (s *Service) Equal(o *Service) bool {
 	if !s.Type.Equal(o.Type) {
 		return false
 	}
-	if s.Hostname != o.Hostname || s.Port != o.Port || !slices.Equal(s.Text, o.Text) {
+	if s.Name != o.Name || s.Hostname != o.Hostname || s.Port != o.Port || !slices.Equal(s.Text, o.Text) {
 		return false
 	}
 	// Note we're not "normalizing" addrs here
