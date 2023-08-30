@@ -22,6 +22,9 @@ const (
 
 	// Enough to send a UDP packet without causing a timeout error
 	writeTimeout = 10 * time.Millisecond
+
+	// Max time window to coalesce cache-updates
+	cacheDelay = time.Millisecond * 25
 )
 
 // A client which publishes and/or browses for services. See `Options` for how to create one.
@@ -65,9 +68,7 @@ loop:
 		var (
 			isPeriodic bool
 			now        time.Time
-			msg        *msgMeta
 		)
-		// Note the timer is always stopped after the `select`
 		select {
 		case <-c.reload:
 			if !timer.Stop() {
@@ -80,17 +81,23 @@ loop:
 				c.opts.logger.Warn("reload failed (ifaces unchanged)", "err", err)
 			}
 			c.opts.logger.Debug("reload", "ifaces", c.conn.ifaces)
-		case m, ok := <-msgCh:
-			if !timer.Stop() {
-				<-timer.C
-			}
+		case msg, ok := <-msgCh:
 			now = time.Now()
 			if !ok {
 				break loop
 			}
-			msg = &m
+
+			// Handle the message
+			_ = c.handleQuery(msg)
+			if c.handleResponse(now, msg) && timer.Stop() {
+				// If the cache was touched, we want the update soon
+				timer.Reset(cacheDelay)
+			}
+			continue
 		case now = <-timer.C:
 		}
+		// Invariant: the timer is stopped.
+
 		// Use wall time exclusively in order to restore accurate state when waking from sleep,
 		// (time jumps forward) such as cache expiry. However, the user still needs to monitor time
 		// and reload in order to reset the periodic announcements and queries.
@@ -104,19 +111,12 @@ loop:
 			c.opts.logger.Debug("announce", "err", err)
 		}
 
-		// Handle any queries
-		if c.opts.publish != nil && msg != nil {
-			_ = c.handleQuery(*msg)
-		}
-
 		// Handle all browser-related maintenance
-		next := bo.next
-		if c.opts.browser != nil {
-			nextBrowserDeadline := c.advanceBrowser(now, msg, isPeriodic)
-			next = earliest(next, nextBrowserDeadline)
-		}
+		nextBrowserDeadline := c.advanceBrowser(now, isPeriodic)
+		nextTimeout := earliest(bo.next, nextBrowserDeadline).Sub(now)
 
-		timer.Reset(next.Sub(now))
+		// Damage control: ensure timeout isn't firing all the time in case of a bug
+		timer.Reset(max(200*time.Millisecond, nextTimeout))
 	}
 	return nil
 }
@@ -232,30 +232,38 @@ func (c *Client) broadcastRecords(unannounce bool) error {
 	return errors.Join(errs...)
 }
 
-func (c *Client) advanceBrowser(now time.Time, msg *msgMeta, isPeriodic bool) (next time.Time) {
-	c.opts.browser.Advance(now)
-	var svcs []*Service
-	if msg != nil {
-		svcs = servicesFromRecords(msg.Msg)
+// Returns true if the browser needs to be advanced soon
+func (c *Client) handleResponse(now time.Time, msg msgMeta) (changed bool) {
+	if c.opts.browser == nil {
+		return false
 	}
+	svcs := servicesFromRecords(msg.Msg)
 	for _, svc := range svcs {
 		// Exclude self-published services
 		if c.opts.publish != nil && svc.Equal(c.opts.publish) {
 			continue
-		}
-		// Set custom TTL unless this is an announcement (we treat TTL=1 as intent to unannounce)
-		if c.opts.expiry > 0 && svc.ttl > time.Second {
-			svc.ttl = c.opts.expiry
 		}
 
 		// Ensure the service matches any of our "search types"
 		if slices.IndexFunc(c.opts.browser.types, svc.Matches) == -1 {
 			continue
 		}
+		changed = true
+		// Set custom TTL unless this is an announcement (we treat TTL=1 as intent to unannounce)
+		if c.opts.expiry > 0 && svc.ttl > time.Second {
+			svc.ttl = c.opts.expiry
+		}
 		// TODO: Debug log when services are refreshed?
-		c.opts.browser.Put(svc)
+		c.opts.browser.Put(svc, now)
 	}
-	if c.opts.browser.ShouldQuery() || isPeriodic {
+	return
+}
+
+func (c *Client) advanceBrowser(now time.Time, isPeriodic bool) time.Time {
+	if c.opts.browser == nil {
+		return now.Add(aLongTime)
+	}
+	if c.opts.browser.Advance(now) || isPeriodic {
 		err := c.broadcastQuery()
 		c.opts.logger.Debug("query", "err", err)
 		c.opts.browser.Queried()

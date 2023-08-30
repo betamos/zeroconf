@@ -71,7 +71,7 @@ func main() {
 	}
 	if *browse {
 		opts.Browse(func(e zeroconf.Event) {
-			log.Printf("%v %v", e.Op, e.Name)
+			log.Println(e.Op, e.Name, e.Addrs)
 		}, ty)
 		log.Printf("browsing for [%v]\n", ty)
 	}

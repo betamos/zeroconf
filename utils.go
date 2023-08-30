@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+var aLongTime = time.Hour * 24
+
 var reDDD = regexp.MustCompile(`(\\\d\d\d)+`)
 
 // Takes (part of) a domain string unpacked by dns and unescapes it back to its original string.
