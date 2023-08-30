@@ -15,13 +15,14 @@ It is tested on Windows, macOS and Linux and is compatible with [Avahi](http://a
 
 * [x] Monitors updates, expiry and unannouncements of services
 * [x] Publish and browse on the same socket, with minimal network traffic
-* [x] Advertises a small set of IPs per network interface\*
+* [x] Advertises a small set of IPs per network interface [1]
 * [x] Hot-reload after network changes or sleeping (see below)
 * [x] Uses modern Go 1.21 with `slog`, `netip`, etc
 
-\* Some other clients advertise all IPs to every interface, which results in many
+[1]: Some other clients advertise all IPs to every interface, which results in many
 redundant and unreachable addresses. This library advertises at most 3 IPs per network interface
-(IPv4, IPv6 link-local and IPv6 global).
+(IPv4, IPv6 link-local and IPv6 global). When browsing, you'll see the union of all *reachable*
+addresses from all interfaces.
 
 ## Usage
 
@@ -74,32 +75,27 @@ every N minutes.
 This package also includes a CLI:
 
 ```bash
-# Browse and publish at the same time (run on two different machines)
-go run ./cmd -b -p "Computer A"
-go run ./cmd -b -p "Computer B"
-
-# Or why not find some Apple devices?
+# Lets find some Apple devices
 go run ./cmd -b -type _rdlink._tcp
 ```
 
-You should see services coming and going, like so:
+To demonstrate the resilience to network changes, run this on two separate devices:
 
-```
-01:23:45 [+] Someone's iPhone
-01:23:47 [+] Some Macbook
-01:25:45 [-] Someone's iPhone
-```
-
-If you're testing on the same host, you may see a lot of updates right away (note the `~`):
-
-```
-01:26:45 [+] Computer B
-01:26:45 [~] Computer B
-01:26:45 [~] Computer B
+```bash
+# Browse and publish at the same time, with frequent reloading and short expiry
+go run ./cmd -b -p "Machine A" -reload 10 -expiry 10
+go run ./cmd -b -p "Machine B" -reload 10 -expiry 10
 ```
 
-This is normal, and happens because the service is becoming reachable over more interfaces
-quickly. A physically different device is typically only reachable over a single interface.
+Now, try turning on and off Wifi, suspending, etc and watch out for changes.
+The state of the device should be reflected within seconds:
+
+```
+11:26:45 [+] Machine B [192.168.1.12, ...]
+11:26:52 [~] Machine B [192.168.1.12, 192.168.1.24, ...]
+11:27:02 [-] Machine B []
+```
+
 
 ## Missing features
 
@@ -114,10 +110,10 @@ quickly. A physically different device is typically only reachable over a single
 ## About
 
 This project is a near-complete rewrite by Didrik Nordström in 2023.
-However, archeologists will find a long lineage:
+However, archeologists will find a noble lineage of honorable predecessors:
 
 - [hashicorp/mdns](https://github.com/hashicorp/mdns)
 - [oleksandr/bonjour](https://github.com/oleksandr/bonjour)
 - [grandcat/zeroconf](https://github.com/grandcat/zeroconf)
 - [libp2p/zeroconf](https://github.com/libp2p/zeroconf)
-- [betamos/zeroconf](https://github.com/betamos/zeroconf) <- You are here
+- [betamos/zeroconf](https://github.com/betamos/zeroconf) ← You are here
