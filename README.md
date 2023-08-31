@@ -96,6 +96,7 @@ The state of the device should be reflected within seconds:
 11:27:02 [-] Machine B []
 ```
 
+An update (note the `~`) means that something changed with the service, such as its IPs.
 
 ## Missing features
 
