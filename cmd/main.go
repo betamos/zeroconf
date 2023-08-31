@@ -66,8 +66,7 @@ func main() {
 	var err error
 	if *name != "" {
 		opts.Publish(svc)
-		log.Printf("publishing to [%v]: %v\n", ty, svc)
-
+		log.Printf("publishing [%v]\n", svc)
 	}
 	if *browse {
 		opts.Browse(func(e zeroconf.Event) {
