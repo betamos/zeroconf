@@ -97,8 +97,11 @@ func (c *cache) Put(svc *Service, now time.Time) {
 }
 
 func (c *cache) setNow(now time.Time) {
-	if now.Before(c.now) {
-		return // Time jumped backwards, not allowed
+	if !now.After(c.now) {
+		// Time jumped backwards. Increment instead to preserve causality while we wait for
+		// the clock to sync up. Existing expiries will be delayed, but this amount should be
+		// miniscule.
+		now = c.now.Add(1)
 	}
 	c.now = now
 }

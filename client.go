@@ -67,7 +67,10 @@ loop:
 	for {
 		var (
 			isPeriodic bool
-			now        time.Time
+
+			// Use wall time exclusively in order to restore accurate state when waking from sleep,
+			// (time jumps forward) such as cache expiry.
+			now time.Time
 		)
 		select {
 		case <-c.reload:
@@ -82,12 +85,11 @@ loop:
 			}
 			c.opts.logger.Debug("reload", "ifaces", c.conn.ifaces)
 		case msg, ok := <-msgCh:
-			now = time.Now()
+			now = time.Now().Round(0)
 			if !ok {
 				break loop
 			}
 
-			// Handle the message
 			_ = c.handleQuery(msg)
 			if c.handleResponse(now, msg) && timer.Stop() {
 				// If the cache was touched, we want the update soon
@@ -95,13 +97,9 @@ loop:
 			}
 			continue
 		case now = <-timer.C:
+			now = now.Round(0)
 		}
 		// Invariant: the timer is stopped.
-
-		// Use wall time exclusively in order to restore accurate state when waking from sleep,
-		// (time jumps forward) such as cache expiry. However, the user still needs to monitor time
-		// and reload in order to reset the periodic announcements and queries.
-		now = now.Round(0)
 
 		isPeriodic = bo.advance(now)
 
