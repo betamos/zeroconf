@@ -23,7 +23,7 @@ func TestParseServicePath(t *testing.T) {
 
 // TODO: Rename to typePath?
 func TestQueryName(t *testing.T) {
-	ty := &Type{
+	ty := Type{
 		Name:     "_chat._tcp",
 		Subtypes: []string{"_printer"},
 		Domain:   "local",
@@ -36,7 +36,7 @@ func TestQueryName(t *testing.T) {
 }
 
 func TestParseTypePath(t *testing.T) {
-	expect := &Type{
+	expect := Type{
 		Name:   "_chat._tcp",
 		Domain: "local",
 	}
@@ -53,7 +53,7 @@ func TestParseTypePath(t *testing.T) {
 }
 
 func TestParseTypePathSubtype(t *testing.T) {
-	expect := &Type{
+	expect := Type{
 		Name:     "_chat._tcp",
 		Subtypes: []string{"_emoji"},
 		Domain:   "local",

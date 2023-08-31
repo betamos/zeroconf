@@ -34,9 +34,9 @@ type Type struct {
 // separated list of subtypes can be added at the end. Here is a full example:
 //
 // `_my-service._tcp.custom.domain,_printer,_sub1,_sub2`
-func NewType(typeStr string) *Type {
+func NewType(typeStr string) Type {
 	typeParts := strings.Split(typeStr, ",")
-	ty := &Type{
+	ty := Type{
 		Name:     typeParts[0],
 		Subtypes: typeParts[1:],
 	}
@@ -51,7 +51,7 @@ func NewType(typeStr string) *Type {
 }
 
 // Returns the type, domain and any subtypes, e.g. `_chat._tcp.local,_emoji`.
-func (t *Type) String() string {
+func (t Type) String() string {
 	var sub string
 	if len(t.Subtypes) > 0 {
 		sub = "," + strings.Join(t.Subtypes, ",")
@@ -60,10 +60,7 @@ func (t *Type) String() string {
 }
 
 // Returns true if the types are equal (excluding subtypes)
-func (t *Type) Equal(o *Type) bool {
-	if t == o {
-		return true
-	}
+func (t Type) Equal(o Type) bool {
 	return t.Name == o.Name && t.Domain == o.Domain
 }
 
@@ -96,7 +93,7 @@ func (t *Type) Validate() error {
 // A service reachable on the local network.
 type Service struct {
 	// The service type
-	Type *Type
+	Type Type
 
 	// A name that uniquely identifies a service of a given type, e.g. `Office Printer 32`.
 	Name string `json:"name"`
@@ -120,7 +117,7 @@ type Service struct {
 
 // Create a new service for publishing. The hostname is generated based on `os.Hostname()`.
 // Choose a unique name to avoid conflicts with other services of the same type.
-func NewService(ty *Type, name string, port uint16) *Service {
+func NewService(ty Type, name string, port uint16) *Service {
 	osHostname, _ := os.Hostname()
 	return &Service{
 		Type:     ty,
@@ -137,9 +134,6 @@ func (s *Service) String() string {
 }
 
 func (s *Service) Validate() error {
-	if s.Type == nil {
-		return errors.New("no type specified")
-	}
 	if err := s.Type.Validate(); err != nil {
 		return err
 	}
@@ -177,7 +171,7 @@ func (s *Service) deepEqual(o *Service) bool {
 }
 
 // Returns true if this service matches the provided query type (including subtype, if present).
-func (s *Service) Matches(q *Type) bool {
+func (s *Service) Matches(q Type) bool {
 	if !q.Equal(s.Type) {
 		return false // Main types are not equal
 	}

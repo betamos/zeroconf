@@ -78,7 +78,7 @@ const (
 // Format:
 // <type>.<domain>.
 // _sub.<subtype>.<type>.<domain>.
-func responderNames(ty *Type) (types []string) {
+func responderNames(ty Type) (types []string) {
 	types = append(types, fmt.Sprintf("%s.%s.", ty.Name, ty.Domain))
 	for _, sub := range ty.Subtypes {
 		types = append(types, fmt.Sprintf("%s._sub.%s.%s.", sub, ty.Name, ty.Domain))
@@ -87,7 +87,7 @@ func responderNames(ty *Type) (types []string) {
 }
 
 // Returns the query DNS name to use in e.g. a PTR query.
-func queryName(ty *Type) (str string) {
+func queryName(ty Type) (str string) {
 	if len(ty.Subtypes) > 0 {
 		return fmt.Sprintf("%s._sub.%s.%s.", ty.Subtypes[0], ty.Name, ty.Domain)
 	} else {
@@ -117,7 +117,7 @@ func parseServicePath(s string) (svc *Service, err error) {
 	name := unescapeDns(parts[0])
 	typeName := fmt.Sprintf("%s.%s", parts[1], parts[2])
 	domain := strings.Join(parts[3:], ".")
-	ty := &Type{typeName, nil, domain}
+	ty := Type{typeName, nil, domain}
 	if err := ty.Validate(); err != nil {
 		return nil, err
 	}

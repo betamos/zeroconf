@@ -8,7 +8,7 @@ import (
 )
 
 type browser struct {
-	types []*Type
+	types []Type
 	*cache
 }
 
@@ -67,7 +67,7 @@ func (o *Options) Publish(svc *Service) *Options {
 // services are ignored.
 //
 // A type may have at most one subtype, in order to narrow the search.
-func (o *Options) Browse(cb func(Event), types ...*Type) *Options {
+func (o *Options) Browse(cb func(Event), types ...Type) *Options {
 	o.browser = &browser{
 		types: types,
 		cache: newCache(cb),
