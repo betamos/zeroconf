@@ -224,10 +224,26 @@ func mergeRecords(svcs ...*Service) *Service {
 
 // Compacts a list of services, removes duplicates.
 func compact(svcs []*Service) (comp []*Service) {
-	// Reverse iteration to populate the latest entry, in case of duplicates
+	// Populated as addrs are added
+	addrMap := make(map[netip.Addr]bool)
+
+	// Reverse iteration to populate the latest first
 	for i := len(svcs) - 1; i >= 0; i-- {
-		if !slices.ContainsFunc(comp, svcs[i].deepEqual) {
-			comp = append(comp, svcs[i])
+		svc := svcs[i]
+		var addrs []netip.Addr
+
+		// Only add if not already previously added
+		for _, addr := range svc.Addrs {
+			if !addrMap[addr] {
+				addrMap[addr] = true
+				addrs = append(addrs, addr)
+			}
+		}
+		// The last record is always added
+		if len(addrs) > 0 || i == len(svcs)-1 {
+			svc = template(svc)
+			svc.Addrs = addrs
+			comp = append(comp, svc)
 		}
 	}
 	slices.Reverse(comp) // Restore order
