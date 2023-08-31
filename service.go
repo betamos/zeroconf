@@ -19,13 +19,15 @@ type Type struct {
 	// Service type name, on the form `_my-service._tcp` or `_my-service._udp`
 	Name string `json:"type"`
 
-	// Service subtypes, e.g. `_printer`. A service can be published with multiple subtypes.
-	// While browsing, a single subtype can be specified to narrow the query.
-	// See RFC 6763 Section 7.1.
-	Subtypes []string `json:"subtypes"`
-
 	// Domain should be `local`
 	Domain string `json:"domain"`
+
+	// Service subtypes, e.g. [`_printer`]. A service can be published with multiple subtypes.
+	// While browsing, a single subtype can be specified to narrow the query.
+	// Avoid subtypes if possible. Some clients don't support them.
+	//
+	// See RFC 6763 Section 7.1.
+	Subtypes []string `json:"subtypes,omitempty"`
 }
 
 // Returns a type based on a string on the form `_my-service._tcp` or `_my-service._udp`.
@@ -34,8 +36,8 @@ type Type struct {
 // separated list of subtypes can be added at the end. Here is a full example:
 //
 // `_my-service._tcp.custom.domain,_printer,_sub1,_sub2`
-func NewType(typeStr string) Type {
-	typeParts := strings.Split(typeStr, ",")
+func NewType(t string) Type {
+	typeParts := strings.Split(t, ",")
 	ty := Type{
 		Name:     typeParts[0],
 		Subtypes: typeParts[1:],
@@ -50,13 +52,9 @@ func NewType(typeStr string) Type {
 	return ty
 }
 
-// Returns the type, domain and any subtypes, e.g. `_chat._tcp.local,_emoji`.
+// Returns the main type and domain, e.g. `_chat._tcp.local`.
 func (t Type) String() string {
-	var sub string
-	if len(t.Subtypes) > 0 {
-		sub = "," + strings.Join(t.Subtypes, ",")
-	}
-	return fmt.Sprintf("%s.%s%s", t.Name, t.Domain, sub)
+	return fmt.Sprintf("%s.%s", t.Name, t.Domain)
 }
 
 // Returns true if the types are equal (excluding subtypes)
@@ -64,22 +62,11 @@ func (t Type) Equal(o Type) bool {
 	return t.Name == o.Name && t.Domain == o.Domain
 }
 
-func (t *Type) normalize() {
-	t.Name = strings.ToLower(t.Name)
-	t.Domain = strings.ToLower(t.Domain)
-	for i, subtype := range t.Subtypes {
-		t.Subtypes[i] = strings.ToLower(subtype)
-	}
-	slices.Sort(t.Subtypes)
-	slices.Compact(t.Subtypes)
-}
-
-func (t *Type) Validate() error {
-	t.normalize()
+func (t Type) Validate() error {
 	if labels, ok := dns.IsDomainName(t.Name); !ok || labels != 2 {
-		return fmt.Errorf("invalid service [%s] needs to be dot-separated", t.Name)
+		return fmt.Errorf("invalid type [%s]", t.Name)
 	}
-	if _, ok := dns.IsDomainName(t.Domain); !ok {
+	if labels, ok := dns.IsDomainName(t.Domain); !ok || labels < 1 {
 		return fmt.Errorf("invalid domain [%s]", t.Domain)
 	}
 	for _, subtype := range t.Subtypes {
@@ -93,7 +80,7 @@ func (t *Type) Validate() error {
 // A service reachable on the local network.
 type Service struct {
 	// The service type
-	Type Type
+	Type Type `json:"type"`
 
 	// A name that uniquely identifies a service of a given type, e.g. `Office Printer 32`.
 	Name string `json:"name"`

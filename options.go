@@ -46,7 +46,7 @@ func (o *Options) Validate() error {
 		for _, ty := range o.browser.types {
 			errs = append(errs, ty.Validate())
 			if len(ty.Subtypes) > 1 {
-				errs = append(errs, errors.New("too many subtypes for browsing"))
+				errs = append(errs, errors.New("at most one subtype is allowed for browsing"))
 			}
 		}
 	}

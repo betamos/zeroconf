@@ -19,7 +19,7 @@ var (
 	browse = flag.Bool("b", false, "Browse for services")
 	name   = flag.String("p", "", "Publish a service with the given name.")
 
-	typeStr = flag.String("type", "_zeroconf-go._tcp", "The service type.")
+	typeStr = flag.String("type", "_zeroconf-go._tcp", "Service type.")
 
 	hostname = flag.String("hostname", "", "Override hostname for the service.")
 	port     = flag.Int("port", 42424, "Override the port for the service.")
@@ -75,7 +75,7 @@ func main() {
 		log.Printf("browsing for [%v]\n", ty)
 	}
 	if !*browse && *name == "" {
-		log.Fatalln("either -p <name> (publish) or -b (browse) must be provided (see -help)")
+		log.Fatalln("either -p <name> (publish) and/or -b (browse) must be provided (see -help)")
 	}
 
 	client, err := opts.Open()

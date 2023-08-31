@@ -117,7 +117,7 @@ func parseServicePath(s string) (svc *Service, err error) {
 	name := unescapeDns(parts[0])
 	typeName := fmt.Sprintf("%s.%s", parts[1], parts[2])
 	domain := strings.Join(parts[3:], ".")
-	ty := Type{typeName, nil, domain}
+	ty := Type{typeName, domain, nil}
 	if err := ty.Validate(); err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func parseQueryName(s string) (ty *Type, err error) {
 
 	typeName := fmt.Sprintf("%s.%s", parts[0], parts[1])
 	domain := strings.Join(parts[2:], ".")
-	ty = &Type{typeName, subtypes, domain}
+	ty = &Type{typeName, domain, subtypes}
 	if err := ty.Validate(); err != nil {
 		return nil, err
 	}
