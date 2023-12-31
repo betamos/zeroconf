@@ -29,6 +29,7 @@ var (
 	expiry  = flag.Int("expiry", 0, "Set a custom expiry in seconds.")
 	text    = flag.String("text", "", "Text values for the service (comma-separated).")
 	reload  = flag.Int("reload", 0, "Reload every n seconds. 0 means never.")
+	src     = flag.Bool("src", false, "Use source- instead of self-reported addresses.")
 
 	verbose = flag.Bool("v", false, "Verbose mode, with debug output.")
 )
@@ -61,7 +62,8 @@ func main() {
 	opts := zeroconf.New().
 		Logger(slog.Default()).
 		Expiry(time.Duration(*expiry) * time.Second).
-		Network(*network)
+		Network(*network).
+		SrcAddrs(*src)
 
 	var err error
 	if *name != "" {

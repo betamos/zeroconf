@@ -22,6 +22,7 @@ type Options struct {
 	ifacesFn func() ([]net.Interface, error)
 	network  string
 	expiry   time.Duration
+	srcAddrs bool
 }
 
 // Returns a new options with default values. Remember to call `Open` at the end to create a client.
@@ -86,6 +87,8 @@ func (o *Options) Expiry(age time.Duration) *Options {
 
 // Change the network to use "udp" (default), "udp4" or "udp6". This will affect self-announced
 // addresses, but those received from others can still be either type.
+// Note that link-local IPv6 addresses don't work by default, as the zone identifier is missing.
+// See `SrcAddrs` for a possible workaround.
 func (o *Options) Network(network string) *Options {
 	o.network = network
 	return o
@@ -100,6 +103,14 @@ func (o *Options) Logger(l *slog.Logger) *Options {
 // Use custom network interfaces. The default is `net.Interfaces`.
 func (o *Options) Interfaces(fn func() ([]net.Interface, error)) *Options {
 	o.ifacesFn = fn
+	return o
+}
+
+// Use the source addr of the UDP packets instead of the self-reported addrs over mDNS.
+// This should be more accurate and also works with link-local ipv6 addresses, but it's a
+// little unorthodox and not tested widely. It also prevents proxy use-cases.
+func (o *Options) SrcAddrs(enabled bool) *Options {
+	o.srcAddrs = enabled
 	return o
 }
 

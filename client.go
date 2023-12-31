@@ -24,7 +24,7 @@ const (
 	writeTimeout = 10 * time.Millisecond
 
 	// Max time window to coalesce cache-updates
-	cacheDelay = time.Millisecond * 25
+	cacheDelay = time.Millisecond * 150
 )
 
 // A client which publishes and/or browses for services. See `Options` for how to create one.
@@ -250,6 +250,10 @@ func (c *Client) handleResponse(now time.Time, msg msgMeta) (changed bool) {
 		// Set custom TTL unless this is an announcement (we treat TTL=1 as intent to unannounce)
 		if c.opts.expiry > 0 && svc.ttl > time.Second {
 			svc.ttl = c.opts.expiry
+		}
+		// Override self-reported addrs with source address instead, if enabled
+		if c.opts.srcAddrs {
+			svc.Addrs = []netip.Addr{msg.Src.Addr()}
 		}
 		// TODO: Debug log when services are refreshed?
 		c.opts.browser.Put(svc, now)
