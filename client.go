@@ -24,7 +24,7 @@ const (
 	writeTimeout = 10 * time.Millisecond
 
 	// Max time window to coalesce cache-updates
-	cacheDelay = time.Millisecond * 150
+	cacheDelay = time.Millisecond * 50
 )
 
 // A client which publishes and/or browses for services. See `Options` for how to create one.
