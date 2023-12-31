@@ -1,5 +1,5 @@
-Zeroconf Service Discovery
-==========================
+# Zeroconf Service Discovery
+
 [![GoDoc](https://godoc.org/github.com/betamos/zeroconf?status.svg)](https://godoc.org/github.com/betamos/zeroconf)
 [![Tests](https://github.com/betamos/zeroconf/actions/workflows/go-test.yml/badge.svg)](https://github.com/betamos/zeroconf/actions/workflows/go-test.yml)
 
@@ -8,20 +8,21 @@ Zeroconf is a pure Golang library for discovering and publishing services on the
 It is tested on Windows, macOS and Linux and is compatible with [Avahi](http://avahi.org/),
 [Bonjour](https://developer.apple.com/bonjour/), etc. It implements:
 
-- [RFC 6762](https://tools.ietf.org/html/rfc6762): Multicast DNS (mDNS)
-- [RFC 6763](https://tools.ietf.org/html/rfc6763): DNS Service Discovery (DNS-SD)
+-   [RFC 6762](https://tools.ietf.org/html/rfc6762): Multicast DNS (mDNS)
+-   [RFC 6763](https://tools.ietf.org/html/rfc6763): DNS Service Discovery (DNS-SD)
 
 ## Features
 
-* [x] Monitors updates, expiry and unannouncements of services
-* [x] Publish and browse on the same socket, with minimal network traffic
-* [x] Advertises a small set of IPs per network interface [1]
-* [x] Hot-reload after network changes or sleeping (see below)
-* [x] Uses modern Go 1.21 with `slog`, `netip`, etc
+-   [x] Monitors updates, expiry and unannouncements of services
+-   [x] Publish and browse on the same socket, with minimal network traffic
+-   [x] Advertises a small set of IPs per network interface [1]
+-   [x] Option for more reliable addrs based on packet source (instead of self-reported)
+-   [x] Hot-reload after network changes or sleeping (see below)
+-   [x] Uses modern Go 1.21 with `slog`, `netip`, etc
 
 [1]: Some other clients advertise all IPs to every interface, which results in many
 redundant and unreachable addresses. This library advertises at most 3 IPs per network interface
-(IPv4, IPv6 link-local and IPv6 global). When browsing, you'll see the union of all *reachable*
+(IPv4, IPv6 link-local and IPv6 global). When browsing, you'll see the union of all _reachable_
 addresses from all interfaces.
 
 ## Usage
@@ -100,21 +101,21 @@ An update (note the `~`) means that something changed with the service, such as 
 
 ## Missing features
 
-- **Conflict resolution** is not implemented, so it's important to pick a unique service name to
-  avoid name collisions. If you don't have a unique persistent identifier, you could add randomized
-  suffix, e.g "Jennifer [3298]".
-- **One-shot queries** (lookup) is currently not supported. As a workaround, you can browse
-  and filter out the instance yourself.
-- **Meta-queries** are also not supported (but we still respond to them correctly).
-- **Updating services**, such as their TXT records, is not supported. Perhaps it should be?
+-   **Conflict resolution** is not implemented, so it's important to pick a unique service name to
+    avoid name collisions. If you don't have a unique persistent identifier, you could add randomized
+    suffix, e.g "Jennifer [3298]".
+-   **One-shot queries** (lookup) is currently not supported. As a workaround, you can browse
+    and filter out the instance yourself.
+-   **Meta-queries** are also not supported (but we still respond to them correctly).
+-   **Updating services**, such as their TXT records, is not supported. Perhaps it should be?
 
 ## About
 
 This project is a near-complete rewrite by Didrik Nordström in 2023.
 However, archeologists will find a noble lineage of honorable predecessors:
 
-- [hashicorp/mdns](https://github.com/hashicorp/mdns)
-- [oleksandr/bonjour](https://github.com/oleksandr/bonjour)
-- [grandcat/zeroconf](https://github.com/grandcat/zeroconf)
-- [libp2p/zeroconf](https://github.com/libp2p/zeroconf)
-- [betamos/zeroconf](https://github.com/betamos/zeroconf) ← You are here
+-   [hashicorp/mdns](https://github.com/hashicorp/mdns)
+-   [oleksandr/bonjour](https://github.com/oleksandr/bonjour)
+-   [grandcat/zeroconf](https://github.com/grandcat/zeroconf)
+-   [libp2p/zeroconf](https://github.com/libp2p/zeroconf)
+-   [betamos/zeroconf](https://github.com/betamos/zeroconf) ← You are here
