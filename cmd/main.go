@@ -38,6 +38,7 @@ func main() {
 	flag.Parse()
 
 	if *verbose {
+		// TODO(go1.22): Use SetLogLoggerLevel(slog.LevelDebug) instead
 		var level = new(slog.LevelVar) // Info by default
 		level.Set(slog.LevelDebug)
 		h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})

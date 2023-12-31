@@ -33,6 +33,8 @@ type msgMeta struct {
 	//
 	// In short: If an index is non-zero, we reply on the same index. If zero, we
 	// must respond to all indices.
+	//
+	// TODO: Investigate whether src iface can be determined from src addr.
 	IfIndex int
 }
 
@@ -260,6 +262,7 @@ func netIfaceAddrs(iface net.Interface) (v4, v6 []netip.Addr, err error) {
 			continue
 		}
 		ip = ip.Unmap()
+		// TODO: ipv4-mapped v6, link-local v6 and ULA (private) v6 addrs overhaul.
 		if ip.Is4() {
 			v4 = append(v4, ip)
 		} else if ip.Is6() && ip.IsGlobalUnicast() {
