@@ -17,7 +17,7 @@ import (
 type Type struct {
 
 	// Service type name, on the form `_my-service._tcp` or `_my-service._udp`
-	Name string `json:"type"`
+	Name string `json:"name"`
 
 	// Domain should be `local`
 	Domain string `json:"domain"`
