@@ -13,7 +13,7 @@ type browser struct {
 }
 
 // Options for a Client
-type Options struct {
+type options struct {
 	logger *slog.Logger
 
 	browser *browser
@@ -25,9 +25,8 @@ type Options struct {
 	srcAddrs bool
 }
 
-// Returns a new options with default values. Remember to call `Open` at the end to create a client.
-func New() *Options {
-	return &Options{
+func defaultOpts() *options {
+	return &options{
 		logger:   slog.Default(),
 		network:  "udp",
 		ifacesFn: net.Interfaces,
@@ -35,7 +34,7 @@ func New() *Options {
 }
 
 // Checks that the options are sound.
-func (o *Options) Validate() error {
+func (o *options) validate() error {
 	if o.browser == nil && o.publish == nil {
 		return errors.New("either a browser or a publisher must be provided")
 	}
@@ -59,66 +58,57 @@ func (o *Options) Validate() error {
 
 // Publish a service of a given type. Name, port and hostname are required.
 // Addrs are determined dynamically based on network interfaces, but can be overriden.
-func (o *Options) Publish(svc *Service) *Options {
-	o.publish = svc
-	return o
+func (c *Client) Publish(svc *Service) *Client {
+	c.opts.publish = svc
+	return c
 }
 
-// Browse for services of the given type(s). The callback is invoked on changes. Self-published
-// services are ignored.
+// Browse for services of the given type(s). The callback is invoked for every event until closed,
+// and must not block. Self-published services are ignored.
 //
 // A type may have at most one subtype, in order to narrow the search.
-func (o *Options) Browse(cb func(Event), types ...Type) *Options {
-	o.browser = &browser{
+func (c *Client) Browse(cb func(Event), types ...Type) *Client {
+	c.opts.browser = &browser{
 		types: types,
 		cache: newCache(cb),
 	}
-	return o
+	return c
 }
 
 // While browsing, override received TTL (normally 120s) with a custom duration. A low value,
 // like 30s, can help detect stale services faster, but results in more frequent "live-check"
 // queries. Conversely, a higher value can keep services "around" that tend to be a bit
 // unresponsive. Services that unannounce themselves are always removed immediately.
-func (o *Options) Expiry(age time.Duration) *Options {
-	o.expiry = age
-	return o
+func (c *Client) Expiry(age time.Duration) *Client {
+	c.opts.expiry = age
+	return c
 }
 
 // Change the network to use "udp" (default), "udp4" or "udp6". This will affect self-announced
 // addresses, but those received from others can still be either type.
-// Note that link-local IPv6 addresses don't work by default, as the zone identifier is missing.
+// Note that link-local IPv6 addresses don't work without a device-local zone identifier.
 // See `SrcAddrs` for a possible workaround.
-func (o *Options) Network(network string) *Options {
-	o.network = network
-	return o
+func (c *Client) Network(network string) *Client {
+	c.opts.network = network
+	return c
 }
 
-// Attach a custom logger. The default is `slog.Default()`.
-func (o *Options) Logger(l *slog.Logger) *Options {
-	o.logger = l
-	return o
+// Use a custom logger. The default is `slog.Default()`.
+func (c *Client) Logger(l *slog.Logger) *Client {
+	c.opts.logger = l
+	return c
 }
 
 // Use custom network interfaces. The default is `net.Interfaces`.
-func (o *Options) Interfaces(fn func() ([]net.Interface, error)) *Options {
-	o.ifacesFn = fn
-	return o
+func (c *Client) Interfaces(fn func() ([]net.Interface, error)) *Client {
+	c.opts.ifacesFn = fn
+	return c
 }
 
 // Use the source addr of the UDP packets instead of the self-reported addrs over mDNS.
 // This should be more accurate and also works with link-local ipv6 addresses, but it's a
 // little unorthodox and not tested widely. It also prevents proxy use-cases.
-func (o *Options) SrcAddrs(enabled bool) *Options {
-	o.srcAddrs = enabled
-	return o
-}
-
-// Open a client with the current options. An error is returned if the options are invalid or
-// there's an issue opening the socket.
-func (o *Options) Open() (*Client, error) {
-	if err := o.Validate(); err != nil {
-		return nil, err
-	}
-	return newClient(o)
+func (c *Client) SrcAddrs(enabled bool) *Client {
+	c.opts.srcAddrs = enabled
+	return c
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
-	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -27,35 +26,45 @@ const (
 	cacheDelay = time.Millisecond * 50
 )
 
-// A client which publishes and/or browses for services. See `Options` for how to create one.
+// A zeroconf client which publishes and/or browses for services.
+//
+// The methods return a self-pointer for optional method chaining.
 type Client struct {
-	wg     sync.WaitGroup
+	done   chan struct{}
 	conn   *conn
-	opts   *Options
+	opts   *options
 	reload chan struct{}
 }
 
-// Create a new zeroconf client.
-func newClient(opts *Options) (*Client, error) {
-	conn, err := newConn(opts.ifacesFn, opts.network)
+// Returns a new client. Next, provide your options and then call `Open`.
+func New() *Client {
+	return &Client{
+		opts:   defaultOpts(),
+		reload: make(chan struct{}, 1),
+		done:   make(chan struct{}),
+	}
+}
+
+// Opens the socket and starts the zeroconf service. All options must be set beforehand,
+// including at least `Browse`, `Publish`, or both.
+func (c *Client) Open() (_ *Client, err error) {
+	if err = c.opts.validate(); err != nil {
+		return nil, err
+	}
+	c.conn, err = newConn(c.opts.ifacesFn, c.opts.network)
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{conn: conn, opts: opts, reload: make(chan struct{}, 1)}
-
-	c.wg.Add(1)
 	c.opts.logger.Debug("open socket", "ifaces", c.conn.ifaces)
-	go c.serve()
+	msgCh := make(chan msgMeta, 32)
+	go c.conn.RunReader(msgCh)
+	go c.serve(msgCh)
 	return c, nil
 }
 
 // The main loop serving a client
-func (c *Client) serve() error {
-	defer c.wg.Done()
-	c.conn.SetReadDeadline(time.Time{})
-
-	msgCh := make(chan msgMeta, 32)
-	go c.conn.RunReader(msgCh)
+func (c *Client) serve(msgCh <-chan msgMeta) {
+	defer close(c.done)
 
 	var (
 		bo    = newBackoff(minInterval, maxInterval)
@@ -116,7 +125,6 @@ loop:
 		// Damage control: ensure timeout isn't firing all the time in case of a bug
 		timer.Reset(max(200*time.Millisecond, nextTimeout))
 	}
-	return nil
 }
 
 // Reloads network interfaces and resets backoff timers, in order to reach
@@ -128,14 +136,13 @@ func (c *Client) Reload() {
 	}
 }
 
-// Unannounces any published services and then closes the network conn. No more events are produced
-// afterwards.
+// Gracefully stops all background tasks, unannounces any services and closes the socket.
 func (c *Client) Close() error {
 	c.conn.SetReadDeadline(time.Now())
-	c.wg.Wait()
+	<-c.done
 	if c.opts.publish != nil {
 		err := c.broadcastRecords(true)
-		c.opts.logger.Debug("unannounce", "err", err)
+		c.opts.logger.Error("unannounce", "err", err)
 	}
 	return c.conn.Close()
 }

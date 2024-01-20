@@ -139,7 +139,7 @@ func (c *conn) conns() (conns []connx) {
 
 // Data receiving routine reads from connection, unpacks packets into dns.Msg
 // structures and sends them to a given msgCh channel
-func (c *conn) RunReader(msgCh chan msgMeta) error {
+func (c *conn) RunReader(msgCh chan<- msgMeta) error {
 	var wg sync.WaitGroup
 	conns := c.conns()
 	errs := make([]error, len(conns))
@@ -155,7 +155,7 @@ func (c *conn) RunReader(msgCh chan msgMeta) error {
 	return errors.Join(errs...)
 }
 
-func recvLoop(c connx, msgCh chan msgMeta) error {
+func recvLoop(c connx, msgCh chan<- msgMeta) error {
 	buf := make([]byte, 65536)
 	for {
 		n, src, ifIndex, err := c.ReadMulticast(buf)
