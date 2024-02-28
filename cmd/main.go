@@ -38,14 +38,9 @@ func main() {
 	flag.Parse()
 
 	if *verbose {
-		// TODO(go1.22): Use SetLogLoggerLevel(slog.LevelDebug) instead
-		var level = new(slog.LevelVar) // Info by default
-		level.Set(slog.LevelDebug)
-		h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
-		slog.SetDefault(slog.New(h))
-	} else {
-		log.SetFlags(log.Ltime)
+		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
+	log.SetFlags(log.Ltime)
 
 	ty := zeroconf.NewType(*typeStr)
 	svc := zeroconf.NewService(ty, *name, uint16(*port))
