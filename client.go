@@ -142,7 +142,7 @@ func (c *Client) Close() error {
 	<-c.done
 	if c.opts.publish != nil {
 		err := c.broadcastRecords(true)
-		c.opts.logger.Error("unannounce", "err", err)
+		c.opts.logger.Debug("unannounce", "err", err)
 	}
 	return c.conn.Close()
 }
