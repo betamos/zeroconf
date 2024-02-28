@@ -2,6 +2,7 @@ package zeroconf
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -66,4 +67,30 @@ func TestBasic(t *testing.T) {
 
 func TestBasicSubtype(t *testing.T) {
 	testBasic(t, testSubService)
+}
+
+func Example() {
+	// Browse for AirPlay devices on the local network
+	ty := NewType("_airplay._tcp")
+	zc, _ := New().Browse(func(e Event) {
+		fmt.Println(e)
+	}, ty).Open()
+
+	defer zc.Close()
+
+	// Main app logic
+}
+
+func Example_pubsub() {
+	// Publish a service and browse for others of the same type
+	ty := NewType("_chat._tcp")
+	svc := NewService(ty, "bobs-laptop", 12345)
+	zc, _ := New().
+		Publish(svc).
+		Browse(func(e Event) {
+			fmt.Println(e)
+		}).Open()
+	defer zc.Close()
+
+	// Main app logic
 }

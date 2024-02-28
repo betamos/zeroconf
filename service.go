@@ -33,9 +33,7 @@ type Type struct {
 // Returns a type based on a string on the form `_my-service._tcp` or `_my-service._udp`.
 //
 // The domain is `local` by default, but can be specified explicitly. Finally, a comma-
-// separated list of subtypes can be added at the end. Here is a full example:
-//
-// `_my-service._tcp.custom.domain,_printer,_sub1,_sub2`
+// separated list of subtypes can be added at the end.
 func NewType(t string) Type {
 	typeParts := strings.Split(t, ",")
 	ty := Type{
