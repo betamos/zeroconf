@@ -303,7 +303,9 @@ func (c *Client) broadcastQuery() error {
 	for _, iface := range c.conn.ifaces {
 		c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 		err := c.conn.WriteMulticast(m, iface.Index, nil)
-		errs = append(errs, err)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("idx %v: %w", iface.Index, err))
+		}
 	}
 
 	return errors.Join(errs...)
