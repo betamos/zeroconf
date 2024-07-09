@@ -64,7 +64,8 @@ type cache struct {
 	services map[string][]*Service
 	cb       func(Event)
 
-	// A number in range [0,1) used for query scheduling jitter. Regenerated at query time.
+	// A number in range [0,1) used for query scheduling jitter. Constant, to simplify the dance
+	// between scheduling and completing tasks.
 	entropy float64
 
 	// Advanced by user
@@ -85,6 +86,7 @@ func newCache(cb func(Event)) *cache {
 	return &cache{
 		services: make(map[string][]*Service),
 		cb:       cb,
+		entropy:  rand.Float64(),
 	}
 }
 
@@ -117,8 +119,6 @@ func (c *cache) Advance(now time.Time) (shouldQuery bool) {
 
 // Should be called once a query has been made.
 func (c *cache) Queried() {
-	c.entropy = rand.Float64()
-
 	// RFC6762 Section 5.2: [...] the interval between the first two queries MUST be at least one
 	// second, the intervals between successive queries MUST increase by at least a factor of two.
 	c.lastQuery = c.now
@@ -145,17 +145,29 @@ func (c *cache) refresh() {
 		if firstExpiry.Before(c.nextExpiry) {
 			c.nextExpiry = firstExpiry
 		}
-
-		// An service has already been queried if it hasn't been seen since the last query
-		if merged.seenAt.Before(c.lastQuery) {
-			continue
-		}
-
 		// Update next livecheck
-		floatDur := float64(merged.ttl) * (0.80 + c.entropy*0.17) // 80-97% of ttl
-		liveCheck := merged.seenAt.Add(time.Duration(floatDur))
-		if liveCheck.Before(c.nextLivecheck) {
-			c.nextLivecheck = liveCheck
+
+		// RFC6762 Section 5.2: The querier should plan to issue a query at 80% of the record
+		// lifetime, and then if no answer is received, at 85%, 90%, and 95%. [...]
+		// a random variation of 2% of the record TTL should be added
+		for _, percentile := range []float64{.80, .85, 0.90, 0.95} {
+			// invariant: liveCheck increasing with each iteration
+			floatDur := float64(merged.ttl) * (percentile + c.entropy*0.02) // 80-97% of ttl
+			liveCheck := merged.seenAt.Add(time.Duration(floatDur))
+
+			// nextLivecheck is earlier than current candidate, so neither this nor later
+			// iterations can reduce it further, hence break out
+			if liveCheck.After(c.nextLivecheck) {
+				break
+			}
+			// invariant: liveCheck (candidate) is earlier and a valid candidate
+
+			// if this candidate livecheck comes after last query, we're in the right bracket.
+			if c.lastQuery.Before(liveCheck) {
+				c.nextLivecheck = liveCheck
+				break
+			}
+			// otherwise, we have already checked it and continue with the next percentile
 		}
 	}
 	c.lastRefresh = c.now
