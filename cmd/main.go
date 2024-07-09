@@ -40,7 +40,7 @@ func main() {
 	if *verbose {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
-	log.SetFlags(log.Ltime)
+	log.SetFlags(log.Lmicroseconds)
 
 	ty := zeroconf.NewType(*typeStr)
 	svc := zeroconf.NewService(ty, *name, uint16(*port))
