@@ -86,7 +86,7 @@ loop:
 			if !timer.Stop() {
 				<-timer.C
 			}
-			now = time.Now()
+			now = time.Now().Round(0)
 			bo.reset()
 			_, err := c.conn.loadIfaces()
 			if err != nil {
