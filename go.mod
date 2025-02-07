@@ -2,6 +2,8 @@ module github.com/betamos/zeroconf
 
 go 1.22.0
 
+retract v0.1.6
+
 require (
 	github.com/miekg/dns v1.1.62
 	golang.org/x/net v0.34.0
