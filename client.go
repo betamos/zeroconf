@@ -51,7 +51,7 @@ func (c *Client) Open() (_ *Client, err error) {
 	if err = c.opts.validate(); err != nil {
 		return nil, err
 	}
-	c.conn, err = newConn(c.opts.ifacesFn, c.opts.network)
+	c.conn, err = newConn(c.opts)
 	if err != nil {
 		return nil, err
 	}
