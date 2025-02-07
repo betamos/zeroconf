@@ -19,10 +19,11 @@ type options struct {
 	browser *browser
 	publish *Service
 
-	ifacesFn func() ([]net.Interface, error)
-	network  string
-	expiry   time.Duration
-	srcAddrs bool
+	ifacesFn     func() ([]net.Interface, error)
+	ifaceAddrsFn func(*net.Interface) ([]net.Addr, error)
+	network      string
+	expiry       time.Duration
+	srcAddrs     bool
 }
 
 func defaultOpts() *options {
@@ -30,6 +31,9 @@ func defaultOpts() *options {
 		logger:   slog.Default(),
 		network:  "udp",
 		ifacesFn: net.Interfaces,
+		ifaceAddrsFn: func(ifi *net.Interface) ([]net.Addr, error) {
+			return ifi.Addrs()
+		},
 	}
 }
 
@@ -100,8 +104,16 @@ func (c *Client) Logger(l *slog.Logger) *Client {
 }
 
 // Use custom network interfaces. The default is `net.Interfaces`.
+// For Android support, see https://github.com/wlynxg/anet
 func (c *Client) Interfaces(fn func() ([]net.Interface, error)) *Client {
 	c.opts.ifacesFn = fn
+	return c
+}
+
+// Use custom addrs for an interface. The default is `iface.Addrs()`.
+// For Android support, see https://github.com/wlynxg/anet
+func (c *Client) InterfaceAddrs(fn func(*net.Interface) ([]net.Addr, error)) *Client {
+	c.opts.ifaceAddrsFn = fn
 	return c
 }
 

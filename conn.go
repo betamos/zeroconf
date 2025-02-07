@@ -62,19 +62,18 @@ type conn struct {
 	c6     *conn6
 	ifaces map[int]*connInterface // key: iface.Index
 
-	// Used initially and on reload to filter interfaces to use
-	ifacesFn func() ([]net.Interface, error)
+	opts *options
 }
 
-func newConn(ifacesFn func() ([]net.Interface, error), network string) (*conn, error) {
+func newConn(opts *options) (*conn, error) {
 
 	c := &conn{
-		ifaces:   make(map[int]*connInterface),
-		ifacesFn: ifacesFn,
+		ifaces: make(map[int]*connInterface),
+		opts:   opts,
 	}
 
 	var err4, err6 error
-	switch network {
+	switch opts.network {
 	case "udp":
 		c.c4, err4 = newConn4()
 		c.c6, err6 = newConn6()
@@ -96,7 +95,7 @@ func newConn(ifacesFn func() ([]net.Interface, error), network string) (*conn, e
 // Load (or reload) ifaces and return whether anything (addresses in particular) have changed.
 func (c *conn) loadIfaces() (changed bool, err error) {
 	ifaces := make(map[int]*connInterface) // new ifaces
-	netIfaces, err := c.ifacesFn()
+	netIfaces, err := c.opts.ifacesFn()
 	if err != nil {
 		return false, err
 	}
@@ -104,7 +103,7 @@ func (c *conn) loadIfaces() (changed bool, err error) {
 		if !isMulticastInterface(netIface) {
 			continue
 		}
-		v4, v6, err := netIfaceAddrs(netIface)
+		v4, v6, err := c.netIfaceAddrs(&netIface)
 		if err != nil {
 			return false, err
 		}
@@ -246,9 +245,9 @@ func (c *conn) Close() error {
 }
 
 // Returns mDNS-suitable unicast addresses for a net.Interface
-func netIfaceAddrs(iface net.Interface) (v4, v6 []netip.Addr, err error) {
+func (c *conn) netIfaceAddrs(iface *net.Interface) (v4, v6 []netip.Addr, err error) {
 	var v6local []netip.Addr
-	ifaceAddrs, err := iface.Addrs()
+	ifaceAddrs, err := c.opts.ifaceAddrsFn(iface)
 	if err != nil {
 		return nil, nil, err
 	}
