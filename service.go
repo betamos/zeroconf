@@ -118,15 +118,13 @@ func (s *Service) String() string {
 	return fmt.Sprintf("%v.%v.%v", s.Name, s.Type.Name, s.Type.Domain)
 }
 
+// Checks that the name and type are valid. The rest can be nullish when unannouncing.
 func (s *Service) Validate() error {
 	if err := s.Type.Validate(); err != nil {
 		return err
 	}
 	if s.Name == "" {
 		return errors.New("no name specified")
-	}
-	if s.Hostname == "" {
-		return errors.New("no hostname specified")
 	}
 	return nil
 }

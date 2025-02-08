@@ -206,6 +206,7 @@ func answerTo(records, knowns []dns.RR, question dns.Question) (answers, extras 
 }
 
 // Returns any services from the msg that matches the provided search type.
+// This includes unannouncements
 func servicesFromRecords(msg *dns.Msg) (services []*Service) {
 	// TODO: Support meta-queries
 	var (
@@ -222,23 +223,35 @@ func servicesFromRecords(msg *dns.Msg) (services []*Service) {
 	// Note that stable sort is necessary to preserve order of A and AAAA records
 	slices.SortStableFunc(answers, byRecordType)
 
+	// Create a svc record if it doesn't exist
+	ensureSvc := func(name string) *Service {
+		if svc = m[name]; svc != nil {
+			return svc
+		}
+		svc, err := parseServicePath(name)
+		if err != nil {
+			return nil
+		}
+		m[name] = svc
+		return svc
+	}
+
 	for _, answer := range answers {
 		switch rr := answer.(type) {
 		// Phase 1: create services
 		case *dns.SRV:
 
 			// pointer to service path, e.g. `My Printer._http._tcp.`
-			if svc, _ = parseServicePath(rr.Hdr.Name); svc == nil {
+			if svc = ensureSvc(rr.Hdr.Name); svc == nil {
 				continue
 			}
 			svc.Hostname = rr.Target
 			svc.Port = rr.Port
 			svc.ttl = time.Second * time.Duration(rr.Hdr.Ttl)
-			m[rr.Hdr.Name] = svc
 
 		// Phase 2: populate subtypes and text
 		case *dns.PTR:
-			if svc = m[rr.Ptr]; svc == nil {
+			if svc = ensureSvc(rr.Ptr); svc == nil {
 				continue
 			}
 			// parse type from query, e.g. `_printer._sub._http._tcp.local.`
